@@ -1,10 +1,13 @@
 import * as THREE from "three";
+import { Easing, Group, Tween } from "@tweenjs/tween.js";
+
 import {
   CSS3DObject,
   CSS3DRenderer,
   TrackballControls,
 } from "three/examples/jsm/Addons.js";
-import * as TWEEN from "@tweenjs/tween.js";
+
+const tweenGroup = new Group();
 
 const table = [
   "H",
@@ -658,7 +661,7 @@ function init() {
 
     const object = new THREE.Object3D();
     object.position.x = table[index + 3] * 140 - 1330;
-    object.position.y = table[index + 4] * 180 + 990;
+    object.position.y = -(table[index + 4] * 180) + 990;
 
     targets.table.push(object);
   }
@@ -717,70 +720,47 @@ function init() {
   controls.maxDistance = 6000;
   controls.addEventListener("change", render);
 
-  //Buttons
-  const buttonTable = document.getElementById("table");
-  buttonTable.addEventListener("click", function () {
-    transform(targets.table, 2000);
-  });
+  const layoutButtons = {
+    table: targets.table,
+    sphere: targets.sphere,
+    helix: targets.helix,
+    grid: targets.grid,
+  };
 
-  const buttonSphere = document.getElementById("sphere");
-  buttonSphere.addEventListener("click", function () {
-    transform(targets.sphere, 2000);
-  });
-
-  const buttonHelix = document.getElementById("helix");
-  buttonHelix.addEventListener("click", function () {
-    transform(targets.helix, 2000);
-  });
-
-  const buttonGrid = document.getElementById("grid");
-  buttonGrid.addEventListener("click", function () {
-    transform(targets.grid, 2000);
-  });
+  for (const [id, layout] of Object.entries(layoutButtons)) {
+    document.getElementById(id).addEventListener("click", () => {
+      transform(layout, 2000);
+    });
+  }
 
   transform(targets.table, 2000);
   window.addEventListener("resize", onWindowResize);
 }
 
-function transform(targets, duration) {
-  TWEEN.removeAll();
-  const l = objects.length;
+function transform(layoutTargets, duration) {
+  tweenGroup.removeAll();
 
-  for (let index = 0; index < l; index++) {
-    const object = objects[index];
-    const target = targets[index];
+  for (const [index, object] of objects.entries()) {
+    const target = layoutTargets[index];
+    const tweenDuration = Math.random() * duration + duration;
 
-    new TWEEN.Tween(object.position)
-      .to(
-        { x: target.position.x, y: target.position.y, z: target.position.z },
-        Math.random() * duration + duration,
-      )
-      .easing(TWEEN.Easing.Exponential.InOut)
-      .start();
-
-    new TWEEN.Tween(object.rotation)
-      .to(
-        { x: target.position.x, y: target.position.y, z: target.position.z },
-        Math.random() * duration + duration,
-      )
-      .easing(TWEEN.Easing.Exponential.InOut)
-      .start();
+    tweenGroup.add(
+      new Tween(object.position)
+        .to(
+          { x: target.position.x, y: target.position.y, z: target.position.z },
+          tweenDuration,
+        )
+        .easing(Easing.Exponential.InOut)
+        .start(),
+      new Tween(object.rotation)
+        .to(
+          { x: target.rotation.x, y: target.rotation.y, z: target.rotation.z },
+          tweenDuration,
+        )
+        .easing(Easing.Exponential.InOut)
+        .start(),
+    );
   }
-
-  new TWEEN.Tween(this)
-    .to({}, duration + 2)
-    .onUpdate(render)
-    .start();
-}
-
-function render() {
-  renderer.render(scene, camera);
-}
-
-function animate() {
-  requestAnimationFrame(animate);
-  TWEEN.update();
-  controls.update();
 }
 
 function onWindowResize() {
@@ -789,4 +769,15 @@ function onWindowResize() {
 
   renderer.setSize(window.innerWidth, window.innerHeight);
   render();
+}
+
+function animate(time) {
+  requestAnimationFrame(animate);
+  tweenGroup.update(time);
+  controls.update();
+  render();
+}
+
+function render() {
+  renderer.render(scene, camera);
 }
