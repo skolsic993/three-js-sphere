@@ -4,7 +4,7 @@ import {
   CSS3DRenderer,
   TrackballControls,
 } from "three/examples/jsm/Addons.js";
-import TWEEN from "three/addons/libs/tween.module.js";
+import * as TWEEN from "@tweenjs/tween.js";
 
 const table = [
   "H",
@@ -603,7 +603,7 @@ let camera, scene, renderer;
 let controls;
 
 const objects = [];
-const targets = {table: [], sphere: [], helix: [], grid: []};
+const targets = { table: [], sphere: [], helix: [], grid: [] };
 
 init();
 animate();
@@ -752,7 +752,7 @@ function transform(targets, duration) {
 
     new TWEEN.Tween(object.position)
       .to(
-        {x: target.position.x, y: target.position.y, z: target.position.z},
+        { x: target.position.x, y: target.position.y, z: target.position.z },
         Math.random() * duration + duration,
       )
       .easing(TWEEN.Easing.Exponential.InOut)
@@ -760,10 +760,10 @@ function transform(targets, duration) {
 
     new TWEEN.Tween(object.rotation)
       .to(
-        {x: target.position.x, y: target.position.y, z: target.position.z},
+        { x: target.position.x, y: target.position.y, z: target.position.z },
         Math.random() * duration + duration,
       )
-      .easing(TWEEN.Tween.Easing.Exponential.InOut)
+      .easing(TWEEN.Easing.Exponential.InOut)
       .start();
   }
 
