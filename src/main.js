@@ -1,5 +1,10 @@
 import * as THREE from "three";
-import {CSS3DObject} from "three/examples/jsm/Addons.js";
+import {
+  CSS3DObject,
+  CSS3DRenderer,
+  TrackballControls,
+} from "three/examples/jsm/Addons.js";
+import TWEEN from "three/addons/libs/tween.module.js";
 
 const table = [
   "H",
@@ -699,4 +704,81 @@ function init() {
 
     targets.grid.push(object);
   }
+
+  //RENDERER
+  renderer = new CSS3DRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.getElementById("container").appendChild(renderer.domElement);
+
+  //CONTROLS
+  controls = new TrackballControls(camera, renderer.domElement);
+  controls.minDistance = 500;
+  controls.maxDistance = 6000;
+  controls.addEventListener("change", render);
+
+  //Buttons
+  const buttonTable = document.getElementById("table");
+  buttonTable.addEventListener("click", function () {
+    transform(targets.table, 2000);
+  });
+
+  const buttonSphere = document.getElementById("sphere");
+  buttonSphere.addEventListener("click", function () {
+    transform(targets.sphere, 2000);
+  });
+
+  const buttonHelix = document.getElementById("helix");
+  buttonHelix.addEventListener("click", function () {
+    transform(targets.helix, 2000);
+  });
+
+  const buttonGrid = document.getElementById("grid");
+  buttonGrid.addEventListener("click", function () {
+    transform(targets.grid, 2000);
+  });
+
+  transform(targets.table, 2000);
+  window.addEventListener("resize", onWindowResize);
+}
+
+function transform(targets, duration) {
+  TWEEN.removeAll();
+
+  for (let index = 0; index < l; index++) {
+    const object = objects[index];
+    const target = targets[index];
+
+    new TWEEN.Tween(object.position)
+      .to(
+        {x: target.position.x, y: target.position.y, z: target.position.z},
+        Math.random() * duration + duration,
+      )
+      .easing(TWEEN.Easing.Exponential.InOut)
+      .start();
+
+    new TWEEN.Tween(object.rotation)
+      .to(
+        {x: target.position.x, y: target.position.y, z: target.position.z},
+        Math.random() * duration + duration,
+      )
+      .easing(TWEEN.Tween.Easing.Exponential.InOut)
+      .start();
+  }
+
+  new TWEEN.Tween(this)
+    .to({}, duration + 2)
+    .onUpdate(render)
+    .start();
+}
+
+function render() {
+  renderer.render(scene, camera);
+}
+
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  render();
 }
