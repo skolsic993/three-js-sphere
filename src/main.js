@@ -606,6 +606,7 @@ const objects = [];
 const targets = {table: [], sphere: [], helix: [], grid: []};
 
 init();
+animate();
 
 function init() {
   camera = new THREE.PerspectiveCamera(
@@ -773,6 +774,12 @@ function transform(targets, duration) {
 
 function render() {
   renderer.render(scene, camera);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  TWEEN.update();
+  controls.update();
 }
 
 function onWindowResize() {
