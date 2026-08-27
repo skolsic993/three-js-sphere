@@ -665,7 +665,7 @@ function init() {
 
   //SPHERE
   const vector = new THREE.Vector3();
-  let l = objects.length;
+  const l = objects.length;
 
   for (let index = 0; index < l; index++) {
     const phi = Math.acos(-1 + (2 * index) / l);
@@ -744,6 +744,7 @@ function init() {
 
 function transform(targets, duration) {
   TWEEN.removeAll();
+  const l = objects.length;
 
   for (let index = 0; index < l; index++) {
     const object = objects[index];

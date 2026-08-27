@@ -12,6 +12,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
+    "@threejs-addons/threejs-addons": "^0.3.0",
     "gsap": "^3.15.0",
     "three": "^0.185.1"
   }
