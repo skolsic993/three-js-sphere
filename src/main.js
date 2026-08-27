@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import {CSS2DRenderer} from "three/examples/jsm/Addons.js";
 
 //Scene
 const scene = new THREE.Scene();
@@ -23,6 +24,9 @@ const material = new THREE.MeshBasicMaterial({color: 0x00ff00});
 const cube = new THREE.Mesh(geometry, material);
 scene.add(cube);
 camera.position.z = 5;
+
+const text = new THREE.( text, parameters );
+scene.add(text);
 
 function animate(time) {
   cube.rotation.x = time / 2000;
