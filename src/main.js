@@ -1,3 +1,5 @@
+import "./style.css";
 import {createRockScene} from "./rock-scene.js";
 
-createRockScene(document.querySelector("#app"));
+const handle = createRockScene(document.querySelector("#app"));
+window.rock = handle;

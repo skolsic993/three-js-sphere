@@ -2,15 +2,16 @@ import * as THREE from "three";
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 import {RoomEnvironment} from "three/addons/environments/RoomEnvironment.js";
 import {createNoise3D} from "simplex-noise";
+import {loadRockTextures, applyRockSurface} from "./rock-surface.js";
 
 const CONFIG = {
   seed: 20260827,
 
   // --- shape ---
-  detail: 24, // needs to be high now: facet edges are approximated
+  detail: 24, // needs to be high: facet edges are approximated
   radius: 1,
   noiseScale: 1.3,
-  amplitude: 0.16, // lower than before - the cuts do the shaping now
+  amplitude: 0.16, // the cuts do the shaping, noise only adds irregularity
   octaves: 4,
   cuts: 11, // number of fracture planes
   cutMin: 0.52, // closest a plane can sit to the centre (deep slice)
@@ -19,9 +20,9 @@ const CONFIG = {
   tilt: [0.35, 0.6, -0.25],
 
   // --- look ---
-  rockColor: 0x15161a,
-  roughness: 0.55,
+  tint: 0x707070, // multiplies the diffuse texture. lower = darker rock
   metalness: 0.15,
+  envMapIntensity: 0.45,
   exposure: 1.1,
 
   minZoomFactor: 0.35,
@@ -84,7 +85,7 @@ function buildRockGeometry(config) {
 
   // PASS 2 - fracture. Each plane is a half-space; any vertex outside it gets
   // projected straight down onto it. Everything that lands on a given plane is
-  // now exactly coplanar, so flat shading renders it as one clean facet.
+  // now exactly coplanar, which is what produces the hard facet edges.
   const planes = [];
   for (let i = 0; i < config.cuts; i++) {
     planes.push({
@@ -108,6 +109,8 @@ function buildRockGeometry(config) {
   geometry.scale(...config.squash);
 
   position.needsUpdate = true;
+  // Non-indexed geometry, so this gives every vertex its own face normal -
+  // the normal attribute ends up faceted without needing flatShading.
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
@@ -136,28 +139,34 @@ export function createRockScene(container, options = {}) {
   container.appendChild(renderer.domElement);
 
   /* Environment map. Without this, every surface not hit by a light is dead
-     flat - which is a big part of why the first render read as plastic. This
-     bakes a tiny procedural room into a cubemap the material can reflect. */
+     flat - a big part of why the untextured version read as plastic. Bakes a
+     small procedural room into a cubemap the material can reflect. */
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environment = envMap;
   pmrem.dispose();
 
+  // Needs the renderer: texture setup reads renderer.capabilities.
+  const textures = loadRockTextures(renderer);
+
   const geometry = buildRockGeometry(config);
   const material = new THREE.MeshStandardMaterial({
-    color: config.rockColor,
-    roughness: config.roughness,
     metalness: config.metalness,
-    flatShading: true,
-    envMapIntensity: 0.45,
+    envMapIntensity: config.envMapIntensity,
   });
+  // Sets color/roughness/flatShading itself, so those are deliberately absent
+  // from the constructor above.
+  applyRockSurface(material, textures);
+  // Applied after, so it multiplies against the diffuse texture and darkens
+  // the rock without flattening any of its detail.
+  material.color.set(config.tint);
+
   const rock = new THREE.Mesh(geometry, material);
   rock.rotation.set(...config.tilt);
   scene.add(rock);
 
-  /* Lighting: one dominant source, everything else subordinate. The previous
-     version's gold light was nearly as strong as the key, which is what made
-     the whole rock read muddy brown instead of black-with-a-gold-edge. */
+  /* Lighting: one dominant source, everything else subordinate. Near-equal
+     lights on a dark object average out to muddy brown. */
   const key = new THREE.DirectionalLight(0xfff2dd, 4.5);
   key.position.set(5, 6, 4);
   scene.add(key);
@@ -170,6 +179,8 @@ export function createRockScene(container, options = {}) {
   fill.position.set(-3, -4, 2);
   scene.add(fill);
 
+  /* Derive camera distances from the rock's actual size, so retuning the
+     noise or the cuts can't break the framing. */
   const r = geometry.boundingSphere.radius;
   const fovRad = THREE.MathUtils.degToRad(camera.fov);
   const fitDistance = (r / Math.sin(fovRad / 2)) * 1.15;
@@ -187,6 +198,8 @@ export function createRockScene(container, options = {}) {
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.35;
 
+  /* ResizeObserver, not window.resize - the container can change size without
+     the window doing anything (sidebars, layout shifts). */
   const resizeObserver = new ResizeObserver(() => {
     const w = container.clientWidth;
     const h = container.clientHeight;
@@ -198,7 +211,7 @@ export function createRockScene(container, options = {}) {
   resizeObserver.observe(container);
 
   renderer.setAnimationLoop(() => {
-    controls.update();
+    controls.update(); // required: damping and autoRotate are on
     renderer.render(scene, camera);
   });
 
@@ -206,6 +219,7 @@ export function createRockScene(container, options = {}) {
     scene,
     camera,
     rock,
+    material,
     dispose() {
       renderer.setAnimationLoop(null);
       resizeObserver.disconnect();
@@ -213,6 +227,8 @@ export function createRockScene(container, options = {}) {
       geometry.dispose();
       material.dispose();
       envMap.dispose();
+      // Optional slot `ao` is null, hence the optional chaining.
+      Object.values(textures).forEach((t) => t?.dispose());
       renderer.dispose();
       renderer.domElement.remove();
     },
