@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geometry Painter — how it works</title>
+  </head>
+  <body class="index-page">
+    <div class="index-wrap">
+      <h1>💎 Geometry Painter — the pieces</h1>
+      <p class="lede">
+        Ten small pages, each one pulling a single mechanism out of the main app and looping it
+        on its own. They exist so the moving parts can be watched instead of described:
+        picking, resampling, culling, growth, and the four shaders that make the modes look
+        alive. Most of them drive the production code directly.
+      </p>
+
+      <div class="index-grid">
+        <a href="./picking.html">
+          <span class="n">01 · PAINTING</span>
+          <h3>Surface picking &amp; the tangent frame</h3>
+          <p>One raycast becomes a point, a normal and the little basis every mode builds in. BVH on and off.</p>
+        </a>
+        <a href="./anchor-space.html">
+          <span class="n">02 · PAINTING</span>
+          <h3>Painting on a canvas that moves</h3>
+          <p>World space versus anchor space, on two spheres that won't stop turning.</p>
+        </a>
+        <a href="./resample.html">
+          <span class="n">03 · PAINTING</span>
+          <h3>From pointer events to a centreline</h3>
+          <p>Why raw pointer samples can't space anything, and what the modes get instead.</p>
+        </a>
+        <a href="./cull.html">
+          <span class="n">04 · ARCHITECTURE</span>
+          <h3>Generate at the maximum, cull with the slider</h3>
+          <p>The real crystal mode, with a rebuild counter that never moves.</p>
+        </a>
+        <a href="./growth.html">
+          <span class="n">05 · ARCHITECTURE</span>
+          <h3>The growth front</h3>
+          <p>Birth distance, growth window and the 5% overshoot that sells the pop.</p>
+        </a>
+        <a href="./ribbon.html">
+          <span class="n">06 · SHADERS</span>
+          <h3>A ribbon with no width</h3>
+          <p>Every crack vertex sits on the centreline. The width is a uniform.</p>
+        </a>
+        <a href="./blackbody.html">
+          <span class="n">07 · SHADERS</span>
+          <h3>Building the heat ramp</h3>
+          <p>Four terms multiplied into one float, then pushed through a blackbody ramp.</p>
+        </a>
+        <a href="./fold-light.html">
+          <span class="n">08 · SHADERS</span>
+          <h3>Fold-locked brightness</h3>
+          <p>Share the wave phase with the fragment stage and a plane becomes fabric.</p>
+        </a>
+        <a href="./colony-pulse.html">
+          <span class="n">09 · SHADERS</span>
+          <h3>One heartbeat, many colonies</h3>
+          <p>A wave that lives in world space, so separate strokes still breathe together.</p>
+        </a>
+        <a href="./studio.html">
+          <span class="n">10 · LOOK</span>
+          <h3>The environment is the lighting</h3>
+          <p>Six emissive quads and no lights. Switch one off, lose a highlight.</p>
+        </a>
+      </div>
+    </div>
+    <script type="module" src="/demos/src/index.ts"></script>
+  </body>
+</html>
