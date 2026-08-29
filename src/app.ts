@@ -120,8 +120,10 @@ export class App {
 
   /** The floating canvas: main rock + companions + paint — tilts together with the mouse. */
   private floatRoot = new THREE.Group();
+  /** Main specimen only (rock + flecks + paint) — set its initial pose here. */
+  private mainRock = new THREE.Group();
   private rock!: THREE.Mesh;
-  private paintRoot = new THREE.Group(); // strokes parent here (child of floatRoot)
+  private paintRoot = new THREE.Group(); // strokes parent here (child of mainRock)
 
   private strokes: Stroke[] = [];
   private live: StrokeInstance[] = [];
@@ -181,7 +183,7 @@ export class App {
       this.camera,
       this.scene,
       () => [this.rock],
-      this.floatRoot,
+      this.mainRock,
     );
     this.painter.onStroke = (samples) => this.addStroke(samples);
     this.painter.onActiveChange = (active) => {
@@ -305,6 +307,10 @@ export class App {
   private async setupCanvasRock(): Promise<void> {
     const textures = await loadRockTextures();
     const geo = createRockGeometry(textures.displacementMap);
+    // Slightly elongate the specimen so it reads longer than the companions.
+    geo.scale(1.14, 1, 1);
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
     const mat = createRockMaterial(textures);
 
     this.rock = new THREE.Mesh(geo, mat);
@@ -312,7 +318,14 @@ export class App {
     this.rock.receiveShadow = true;
 
     const flecks = createGoldFlecks(geo, { veinCount: 10, seed: 0x601d });
-    this.floatRoot.add(this.rock, flecks, this.paintRoot);
+    this.mainRock.add(this.rock, flecks, this.paintRoot);
+
+    // Initial pose of the main stone — tweak these (radians for rotation).
+    // Companions stay put; mouse tilt still turns the whole floatRoot.
+    this.mainRock.position.set(0, 0, 0);
+    this.mainRock.rotation.set(1.5, 0.45, -0.08);
+
+    this.floatRoot.add(this.mainRock);
     this.addCompanionRocks(textures);
     this.scene.add(this.floatRoot);
     // Only the canvas rock is paintable — companions are scenery.
