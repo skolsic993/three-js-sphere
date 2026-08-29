@@ -334,7 +334,7 @@ export class App {
     this.rock.castShadow = true;
     this.rock.receiveShadow = true;
 
-    const flecks = createGoldFlecks(geo, { veinCount: 18, seed: 0x601d });
+    const flecks = createGoldFlecks(geo, { veinCount: 10, seed: 0x601d });
     this.floatRoot.add(this.rock, flecks, this.paintRoot);
     this.scene.add(this.floatRoot);
     indexForRaycasts(this.floatRoot);

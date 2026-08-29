@@ -31,8 +31,7 @@ export async function loadRockTextures(): Promise<RockTextures> {
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     tex.anisotropy = 8;
-    // Tighter grain on a larger chunk so micro-detail stays readable.
-    tex.repeat.set(2.4, 2.4);
+    tex.repeat.set(1.6, 1.6);
   }
 
   return { map, normalMap, roughnessMap, displacementMap };
@@ -233,12 +232,9 @@ export function createRockGeometry(
     dir.multiplyScalar(1 / plen);
 
     // --- 2. Domain warp → organic folds instead of geometric cells ---
-    const wx =
-      fbm(p.x * 0.9 + seed, p.y * 0.9, p.z * 0.9, 4) * 0.55;
-    const wy =
-      fbm(p.x * 0.9 + 17, p.y * 0.9 + seed, p.z * 0.9, 4) * 0.55;
-    const wz =
-      fbm(p.x * 0.9, p.y * 0.9 + 29, p.z * 0.9 + seed, 4) * 0.55;
+    const wx = fbm(p.x * 0.9 + seed, p.y * 0.9, p.z * 0.9, 4) * 0.55;
+    const wy = fbm(p.x * 0.9 + 17, p.y * 0.9 + seed, p.z * 0.9, 4) * 0.55;
+    const wz = fbm(p.x * 0.9, p.y * 0.9 + 29, p.z * 0.9 + seed, 4) * 0.55;
     const qx = p.x + wx;
     const qy = p.y + wy;
     const qz = p.z + wz;
@@ -249,12 +245,7 @@ export function createRockGeometry(
     const fine = fbm(qx * 2.8, qy * 2.8 + seed, qz * 2.8, 3);
     const crevice = creviceMask(qx, qy, qz, 1.1, seed);
 
-    let r =
-      0.78 +
-      ridges * 0.38 +
-      broad * 0.16 +
-      fine * 0.06 -
-      crevice * 0.18;
+    let r = 0.78 + ridges * 0.38 + broad * 0.16 + fine * 0.06 - crevice * 0.18;
 
     // Keep a solid core so thin spikes don't form.
     r = Math.max(0.55, r);
@@ -279,9 +270,9 @@ export function createRockGeometry(
       }
     }
 
-    // --- 4. Bake Poly Haven displacement as real surface relief ---
-    const u = uv.getX(i) * 2.4;
-    const v = uv.getY(i) * 2.4;
+    // Bake Poly Haven displacement as real surface relief (UVs match texture.repeat).
+    const u = uv.getX(i) * 1.6;
+    const v = uv.getY(i) * 1.6;
     const h = sampleDisplacement(data, width, height, u, v);
     const outward = p.length() || 1;
     const relief =
@@ -320,15 +311,15 @@ export function createRockMaterial(
   textures: RockTextures,
 ): THREE.MeshPhysicalMaterial {
   return new THREE.MeshPhysicalMaterial({
-    color: 0x1a1c20, // charcoal wash over the albedo
+    color: 0xffffff,
     map: textures.map,
     normalMap: textures.normalMap,
-    normalScale: new THREE.Vector2(1.85, 1.85),
+    normalScale: new THREE.Vector2(1.7, 1.7),
     roughnessMap: textures.roughnessMap,
     roughness: 1,
     metalness: 0,
     clearcoat: 0,
-    envMapIntensity: 0.1,
+    envMapIntensity: 0.12,
     specularIntensity: 0.15,
   });
 }
