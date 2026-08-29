@@ -32,7 +32,7 @@ import {
   type RockTextures,
 } from "./rockGeometry";
 import { createGoldFlecks } from "./goldFlecks";
-import { sampleRockSurfaceByCoverage } from "./crystalCoverage";
+import { sampleRockCoverageVeins } from "./crystalCoverage";
 import { buildGui } from "./ui";
 
 export type ModeName =
@@ -151,9 +151,9 @@ export class App {
   private sceneryStrokes: StrokeInstance[] = [];
   /**
    * Random surface fill on the main rock from `crystal.surfaceCoverage`.
-   * Separate from painted strokes so Clear/Undo only affect what the user drew.
+   * One stroke per vein so seams grow independently; ignored by undo/clear.
    */
-  private coverageStroke: StrokeInstance | null = null;
+  private coverageStrokes: StrokeInstance[] = [];
   /** The backlight/kicker pair, scaled together by the Backlight slider. */
   private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
 
@@ -363,26 +363,26 @@ export class App {
   }
 
   /**
-   * Fill the main rock with random crystal clusters covering `surfaceCoverage`
-   * of the surface (0..1). Safe to call again when coverage or seed changes.
-   * @param animate — if true, clusters grow in; if false, snap fully grown.
+   * Fill the main rock with crystal veins + packed dots covering `surfaceCoverage`
+   * of the surface (0..1). Parent under the rock mesh so anchors match companions.
    */
   rebuildMainRockCoverage(animate: boolean): void {
-    if (this.coverageStroke) {
-      this.paintRoot.remove(this.coverageStroke.group);
-      this.coverageStroke.dispose();
-      this.coverageStroke = null;
+    for (const s of this.coverageStrokes) {
+      s.group.removeFromParent();
+      s.dispose();
     }
+    this.coverageStrokes = [];
 
     const coverage = THREE.MathUtils.clamp(this.crystal.surfaceCoverage, 0, 1);
     if (coverage <= 0 || !this.rock) return;
 
-    const samples = sampleRockSurfaceByCoverage(this.rock.geometry, {
+    const veins = sampleRockCoverageVeins(this.rock.geometry, {
       coverage,
       seed: this.effectiveSeed(0xc0ff),
       crystalSize: this.crystal.crystalSize,
       spread: this.crystal.spread,
     });
+    const samples = veins.flat();
     if (samples.length === 0) return;
 
     // Density locked at max so the coverage % alone controls fill amount.
@@ -394,8 +394,9 @@ export class App {
         clusterDensity: 16,
       },
     );
-    this.paintRoot.add(stroke.group);
-    this.coverageStroke = stroke;
+    // Same parenting as companion scenery crystals — rock-local = sample-local.
+    this.rock.add(stroke.group);
+    this.coverageStrokes.push(stroke);
     if (!animate) stroke.finishGrowth();
   }
 
@@ -898,12 +899,12 @@ export class App {
       else needRebuild = true;
     }
     // Keep the random fill in sync with crystal look, but density stays max so
-    // surfaceCoverage remains the only fill-amount control for that stroke.
-    if (mode === "Crystals" && this.coverageStroke?.applySettings) {
-      this.coverageStroke.applySettings({
-        ...this.crystal,
-        clusterDensity: 16,
-      });
+    // surfaceCoverage remains the only fill-amount control for those strokes.
+    if (mode === "Crystals") {
+      const coverageSettings = { ...this.crystal, clusterDensity: 16 };
+      for (const s of this.coverageStrokes) {
+        s.applySettings?.(coverageSettings);
+      }
     }
     if (needRebuild) this.scheduleRegrow("instant");
   }
@@ -1041,7 +1042,7 @@ export class App {
     this.painter.update(dt);
     for (const s of this.live) s.update(dt, tSec);
     for (const s of this.sceneryStrokes) s.update(dt, tSec);
-    this.coverageStroke?.update(dt, tSec);
+    for (const s of this.coverageStrokes) s.update(dt, tSec);
 
     // All rocks share floatRoot — ease toward the mouse tilt (no idle spin).
     this.floatRoot.rotation.x = THREE.MathUtils.damp(

@@ -4,13 +4,9 @@ import { mulberry32, type SurfaceSample } from "./modes/mode";
 /**
  * Random crystal coverage for a rock mesh.
  *
- * `coverage` is 0..1: the fraction of the rock surface to fill with crystal
- * clusters. 0.65 ≈ 65% packed footprints. Count is derived from mesh area and
- * cluster footprint (crystalSize × spread), so the same percentage reads similarly
- * across rock sizes — suitable as a monorepo/API dial.
- *
- * Samples are taken on triangle faces (not vertices) with outward face normals so
- * clusters sit on the visible surface instead of drifting off bad averaged normals.
+ * `coverage` is 0..1. Mix of short surface veins + packed dots.
+ * Samples triangles directly (no giant face list) so rebuild stays snappy
+ * even on high-detail rocks.
  */
 
 export interface CrystalCoverageOpts {
@@ -19,46 +15,16 @@ export interface CrystalCoverageOpts {
   seed: number;
   crystalSize: number;
   spread: number;
-  /**
-   * Only seed faces whose normal points somewhat upward.
-   * Useful for small scenery rocks; leave false for the main specimen.
-   */
   upperHemisphereOnly?: boolean;
 }
 
-interface SurfaceFace {
-  ax: number;
-  ay: number;
-  az: number;
-  bx: number;
-  by: number;
-  bz: number;
-  cx: number;
-  cy: number;
-  cz: number;
-  nx: number;
-  ny: number;
-  nz: number;
-  area: number;
-  cdf: number; // cumulative area for weighted picks
-}
-
-/** Approximate surface area from triangle cross-products (fallback: sphere). */
 export function estimateSurfaceArea(geo: THREE.BufferGeometry): number {
-  const faces = buildOutwardFaces(geo);
-  if (faces.length === 0) {
-    geo.computeBoundingSphere();
-    const r = geo.boundingSphere?.radius ?? 1;
-    return 4 * Math.PI * r * r;
-  }
-  return faces[faces.length - 1]!.cdf;
+  geo.computeBoundingSphere();
+  const r = geo.boundingSphere?.radius ?? 1;
+  // Displaced rock ≈ sphere area; good enough for coverage packing.
+  return 4 * Math.PI * r * r;
 }
 
-/**
- * How many clusters "coverage" implies for this rock and crystal footprint.
- * Footprint is treated as a disk of radius ≈ crystalSize * spread * 0.55.
- * Capped so dense rocks stay interactive while still reading as full at 100%.
- */
 export function clusterCountForCoverage(
   surfaceArea: number,
   coverage: number,
@@ -67,204 +33,257 @@ export function clusterCountForCoverage(
 ): number {
   const t = THREE.MathUtils.clamp(coverage, 0, 1);
   if (t <= 0) return 0;
-  const radius = Math.max(crystalSize * spread * 0.55, 0.03);
+  const radius = Math.max(crystalSize * spread * 0.3, 0.018);
   const footprint = Math.PI * radius * radius;
-  // Slight overlap allowance so 100% still reads full without absurd counts.
-  const packed = Math.max(1, Math.floor(surfaceArea / (footprint * 0.9)));
-  // Hard cap: each cluster allocates many shard slots; keep rebuilds snappy.
-  const MAX_CLUSTERS = 180;
-  return Math.max(1, Math.min(MAX_CLUSTERS, Math.round(t * packed)));
+  const packed = Math.max(1, Math.floor(surfaceArea / (footprint * 0.5)));
+  const MAX_CLUSTERS = 560;
+  return Math.max(12, Math.min(MAX_CLUSTERS, Math.round(t * packed)));
 }
 
 /**
- * Pick unique surface points that roughly fill `coverage` of the rock.
- * Area-weighted triangle samples + outward face normals keep crystals glued on.
+ * Coverage as vein paths + gap-filling dots. Always returns samples when coverage > 0.
  */
-export function sampleRockSurfaceByCoverage(
+export function sampleRockCoverageVeins(
   geo: THREE.BufferGeometry,
   opts: CrystalCoverageOpts,
-): SurfaceSample[] {
+): SurfaceSample[][] {
   const rnd = mulberry32(opts.seed);
-  const faces = buildOutwardFaces(geo);
-  if (faces.length === 0) return [];
-
-  const totalArea = faces[faces.length - 1]!.cdf;
-  const target = clusterCountForCoverage(
-    totalArea,
-    opts.coverage,
-    opts.crystalSize,
-    opts.spread,
-  );
-  if (target <= 0) return [];
-
-  const eligible = opts.upperHemisphereOnly
-    ? faces.filter((f) => f.ny > 0.15)
-    : faces;
-  const pool = eligible.length > 0 ? eligible : faces;
-
-  // Fresh CDF over the active pool (filtered faces keep stale cumulative values).
-  const cdf: number[] = new Array(pool.length);
-  let run = 0;
-  for (let i = 0; i < pool.length; i++) {
-    run += pool[i]!.area;
-    cdf[i] = run;
-  }
-  if (run <= 1e-12) return [];
-
-  const minDist =
-    Math.max(opts.crystalSize * opts.spread * 0.7, 0.04) * (0.85 + rnd() * 0.2);
-  const minDistSq = minDist * minDist;
-
-  const samples: SurfaceSample[] = [];
-  const px: number[] = [];
-  const py: number[] = [];
-  const pz: number[] = [];
-
-  // Extra attempts: min-distance rejects some picks on a busy surface.
-  const maxAttempts = target * 24;
-  for (
-    let attempt = 0;
-    attempt < maxAttempts && samples.length < target;
-    attempt++
-  ) {
-    const face = pickFace(pool, cdf, run, rnd);
-    const point = randomPointOnFace(face, rnd);
-
-    let ok = true;
-    for (let k = 0; k < samples.length; k++) {
-      const dx = point.x - px[k]!;
-      const dy = point.y - py[k]!;
-      const dz = point.z - pz[k]!;
-      if (dx * dx + dy * dy + dz * dz < minDistSq) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-
-    const local = point;
-    const localNormal = new THREE.Vector3(face.nx, face.ny, face.nz);
-    samples.push({
-      position: local.clone(),
-      normal: localNormal.clone(),
-      local,
-      localNormal,
-    });
-    px.push(local.x);
-    py.push(local.y);
-    pz.push(local.z);
-  }
-
-  return samples;
-}
-
-/** Build triangles with area and outward-facing normals (away from mesh centroid). */
-function buildOutwardFaces(geo: THREE.BufferGeometry): SurfaceFace[] {
   const pos = geo.getAttribute("position") as THREE.BufferAttribute;
   const idx = geo.getIndex();
+  const triCount = idx ? idx.count / 3 : Math.floor(pos.count / 3);
+  if (triCount < 1) return [];
 
   geo.computeBoundingBox();
   const center = new THREE.Vector3();
   geo.boundingBox?.getCenter(center);
 
+  const area = estimateSurfaceArea(geo);
+  const target = clusterCountForCoverage(
+    area,
+    opts.coverage,
+    opts.crystalSize,
+    opts.spread,
+  );
+
+  const t = THREE.MathUtils.clamp(opts.coverage, 0, 1);
+  const veinBudget = Math.max(6, Math.round(target * 0.5));
+  const dotBudget = Math.max(6, target - veinBudget);
+  const spacing = Math.max(opts.crystalSize * opts.spread * 0.2, 0.03);
+  const veinCount = Math.max(4, Math.round(8 + t * 40));
+  const perVein = Math.max(5, Math.ceil(veinBudget / veinCount));
+
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
   const ab = new THREE.Vector3();
   const ac = new THREE.Vector3();
   const n = new THREE.Vector3();
   const mid = new THREE.Vector3();
-  const faces: SurfaceFace[] = [];
-  let cdf = 0;
+  const p = new THREE.Vector3();
 
-  const push = (ia: number, ib: number, ic: number): void => {
-    const ax = pos.getX(ia);
-    const ay = pos.getY(ia);
-    const az = pos.getZ(ia);
-    const bx = pos.getX(ib);
-    const by = pos.getY(ib);
-    const bz = pos.getZ(ib);
-    const cx = pos.getX(ic);
-    const cy = pos.getY(ic);
-    const cz = pos.getZ(ic);
-
-    ab.set(bx - ax, by - ay, bz - az);
-    ac.set(cx - ax, cy - ay, cz - az);
+  const readTri = (
+    tri: number,
+  ): { ok: boolean; nx: number; ny: number; nz: number } => {
+    const base = tri * 3;
+    let ia: number;
+    let ib: number;
+    let ic: number;
+    if (idx) {
+      ia = idx.getX(base);
+      ib = idx.getX(base + 1);
+      ic = idx.getX(base + 2);
+    } else {
+      ia = base;
+      ib = base + 1;
+      ic = base + 2;
+    }
+    a.fromBufferAttribute(pos, ia);
+    b.fromBufferAttribute(pos, ib);
+    c.fromBufferAttribute(pos, ic);
+    ab.subVectors(b, a);
+    ac.subVectors(c, a);
     n.copy(ab).cross(ac);
-    const twiceArea = n.length();
-    if (twiceArea < 1e-12) return;
-    n.multiplyScalar(1 / twiceArea);
-
-    // Flip if the winding faces the centroid (inward).
+    const len = n.length();
+    if (len < 1e-12) return { ok: false, nx: 0, ny: 1, nz: 0 };
+    n.multiplyScalar(1 / len);
     mid.set(
-      (ax + bx + cx) / 3 - center.x,
-      (ay + by + cy) / 3 - center.y,
-      (az + bz + cz) / 3 - center.z,
+      (a.x + b.x + c.x) / 3 - center.x,
+      (a.y + b.y + c.y) / 3 - center.y,
+      (a.z + b.z + c.z) / 3 - center.z,
     );
     if (n.dot(mid) < 0) n.negate();
-
-    const area = twiceArea * 0.5;
-    cdf += area;
-    faces.push({
-      ax,
-      ay,
-      az,
-      bx,
-      by,
-      bz,
-      cx,
-      cy,
-      cz,
-      nx: n.x,
-      ny: n.y,
-      nz: n.z,
-      area,
-      cdf,
-    });
+    if (opts.upperHemisphereOnly && n.y <= 0.1) {
+      return { ok: false, nx: n.x, ny: n.y, nz: n.z };
+    }
+    return { ok: true, nx: n.x, ny: n.y, nz: n.z };
   };
 
-  if (idx) {
-    for (let i = 0; i < idx.count; i += 3) {
-      push(idx.getX(i), idx.getX(i + 1), idx.getX(i + 2));
+  const pointOnTri = (): void => {
+    let u = rnd();
+    let v = rnd();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
     }
-  } else {
-    for (let i = 0; i < pos.count; i += 3) {
-      push(i, i + 1, i + 2);
+    const w = 1 - u - v;
+    p.set(
+      a.x * w + b.x * u + c.x * v,
+      a.y * w + b.y * u + c.y * v,
+      a.z * w + b.z * u + c.z * v,
+    );
+  };
+
+  const pickTri = (): number => Math.floor(rnd() * triCount);
+
+  const makeSample = (
+    x: number,
+    y: number,
+    z: number,
+    nx: number,
+    ny: number,
+    nz: number,
+  ): SurfaceSample => {
+    const local = new THREE.Vector3(x, y, z);
+    const localNormal = new THREE.Vector3(nx, ny, nz).normalize();
+    return {
+      position: local.clone(),
+      normal: localNormal.clone(),
+      local,
+      localNormal,
+    };
+  };
+
+  const occupied: THREE.Vector3[] = [];
+  const tooClose = (x: number, y: number, z: number, minD: number): boolean => {
+    const minDSq = minD * minD;
+    for (const q of occupied) {
+      const dx = x - q.x;
+      const dy = y - q.y;
+      const dz = z - q.z;
+      if (dx * dx + dy * dy + dz * dz < minDSq) return true;
     }
+    return false;
+  };
+
+  const sampleOne = (minD: number): SurfaceSample | null => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const tri = pickTri();
+      const face = readTri(tri);
+      if (!face.ok) continue;
+      pointOnTri();
+      if (tooClose(p.x, p.y, p.z, minD)) continue;
+      const s = makeSample(p.x, p.y, p.z, face.nx, face.ny, face.nz);
+      occupied.push(s.local);
+      return s;
+    }
+    return null;
+  };
+
+  const veins: SurfaceSample[][] = [];
+
+  // --- veins: crawl in the tangent plane, re-snap to nearby triangles ---
+  for (let v = 0; v < veinCount; v++) {
+    const start = sampleOne(spacing * 1.4);
+    if (!start) continue;
+    const vein: SurfaceSample[] = [start];
+
+    const normal = start.localNormal.clone();
+    let dir = new THREE.Vector3(1, 0, 0);
+    if (Math.abs(normal.x) > 0.9) dir.set(0, 1, 0);
+    dir.cross(normal).normalize();
+    const spin = rnd() * Math.PI * 2;
+    const bitangent = new THREE.Vector3().crossVectors(normal, dir);
+    dir
+      .multiplyScalar(Math.cos(spin))
+      .addScaledVector(bitangent, Math.sin(spin))
+      .normalize();
+
+    const cursor = start.local.clone();
+    const step = spacing * (0.65 + rnd() * 0.4);
+
+    for (let i = 1; i < perVein; i++) {
+      cursor
+        .addScaledVector(dir, step)
+        .addScaledVector(bitangent, (rnd() - 0.5) * step * 0.4);
+
+      // Snap: try random tris, keep the closest centroid to cursor.
+      let bestTri = -1;
+      let bestDist = Infinity;
+      for (let k = 0; k < 36; k++) {
+        const tri = pickTri();
+        const face = readTri(tri);
+        if (!face.ok) continue;
+        mid.set(
+          (a.x + b.x + c.x) / 3,
+          (a.y + b.y + c.y) / 3,
+          (a.z + b.z + c.z) / 3,
+        );
+        const d = mid.distanceToSquared(cursor);
+        if (d < bestDist) {
+          bestDist = d;
+          bestTri = tri;
+        }
+      }
+      if (bestTri < 0) break;
+      const face = readTri(bestTri);
+      if (!face.ok) break;
+      pointOnTri();
+      cursor.lerp(p, 0.8);
+      if (tooClose(cursor.x, cursor.y, cursor.z, spacing * 0.45)) {
+        // Nudge along and keep trying — don't kill the whole vein.
+        continue;
+      }
+      normal.set(face.nx, face.ny, face.nz);
+      const s = makeSample(
+        cursor.x,
+        cursor.y,
+        cursor.z,
+        face.nx,
+        face.ny,
+        face.nz,
+      );
+      vein.push(s);
+      occupied.push(s.local);
+
+      dir.sub(normal.clone().multiplyScalar(dir.dot(normal)));
+      if (dir.lengthSq() < 1e-6) {
+        dir.set(1, 0, 0);
+        if (Math.abs(normal.x) > 0.9) dir.set(0, 1, 0);
+        dir.cross(normal);
+      }
+      dir.normalize();
+      bitangent.crossVectors(normal, dir).normalize();
+    }
+
+    if (vein.length >= 3) veins.push(vein);
   }
 
-  return faces;
+  // --- packed dots between veins ---
+  const dots: SurfaceSample[] = [];
+  for (let i = 0; i < dotBudget * 25 && dots.length < dotBudget; i++) {
+    const s = sampleOne(spacing * 0.75);
+    if (s) dots.push(s);
+  }
+  if (dots.length > 0) veins.push(dots);
+
+  if (veins.length === 0) {
+    const emergency: SurfaceSample[] = [];
+    for (let i = 0; i < target; i++) {
+      const tri = pickTri();
+      const face = readTri(tri);
+      if (!face.ok) continue;
+      pointOnTri();
+      emergency.push(makeSample(p.x, p.y, p.z, face.nx, face.ny, face.nz));
+    }
+    if (emergency.length > 0) return [emergency];
+  }
+
+  return veins;
 }
 
-function pickFace(
-  faces: SurfaceFace[],
-  cdf: number[],
-  totalArea: number,
-  rnd: () => number,
-): SurfaceFace {
-  const t = rnd() * totalArea;
-  let lo = 0;
-  let hi = faces.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (cdf[mid]! < t) lo = mid + 1;
-    else hi = mid;
-  }
-  return faces[lo]!;
-}
-
-/** Uniform barycentric sample on a triangle. */
-function randomPointOnFace(
-  face: SurfaceFace,
-  rnd: () => number,
-): THREE.Vector3 {
-  let u = rnd();
-  let v = rnd();
-  if (u + v > 1) {
-    u = 1 - u;
-    v = 1 - v;
-  }
-  const w = 1 - u - v;
-  return new THREE.Vector3(
-    face.ax * w + face.bx * u + face.cx * v,
-    face.ay * w + face.by * u + face.cy * v,
-    face.az * w + face.bz * u + face.cz * v,
-  );
+export function sampleRockSurfaceByCoverage(
+  geo: THREE.BufferGeometry,
+  opts: CrystalCoverageOpts,
+): SurfaceSample[] {
+  return sampleRockCoverageVeins(geo, opts).flat();
 }

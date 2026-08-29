@@ -32,9 +32,9 @@ export type CrystalPaletteName =
 export interface CrystalSettings {
   palette: CrystalPaletteName;
   /**
-   * 0..1 — fraction of the rock surface to pre-fill with random crystal clusters
-   * on load (and when this / seed changes). 0.65 ≈ 65% packed coverage. Paint
-   * strokes are separate and stack on top.
+   * 0..1 — fraction of the rock surface to pre-fill with crystal *veins*
+   * on load (and when this / seed changes). 0.65 ≈ 65% as path-like seams
+   * across the stone, not a salt scatter. Paint strokes stack on top.
    */
   surfaceCoverage: number;
   clusterDensity: number; // clusters per world unit of stroke (live-culled up to MAX_DENSITY)
@@ -50,7 +50,7 @@ export interface CrystalSettings {
 
 export const defaultCrystalSettings: CrystalSettings = {
   palette: "Citrine",
-  surfaceCoverage: 0.65,
+  surfaceCoverage: 0.8,
   clusterDensity: 16,
   crystalSize: 0.158,
   shards: 8,
@@ -399,14 +399,15 @@ class CrystalStroke implements StrokeInstance {
     samples: SurfaceSample[],
     seed: number,
     settings: CrystalSettings,
-    scatterMode: "path" | "points" = "path",
+    scatterMode: "path" | "points" | "veins" = "path",
   ) {
     this.settings = { ...settings };
     const rnd = mulberry32(seed);
+    const embedded = scatterMode === "points" || scatterMode === "veins";
     const instances =
       scatterMode === "points"
         ? this.scatterPoints(samples, rnd)
-        : this.scatter(samples, rnd);
+        : this.scatter(samples, rnd, embedded ? "embedded" : "vein");
 
     // Bucket instances per geometry variant → one tinted + one clear InstancedMesh each.
     this.byVariant = Array.from({ length: VARIANTS }, () => []);
@@ -461,6 +462,7 @@ class CrystalStroke implements StrokeInstance {
   private scatter(
     samples: SurfaceSample[],
     rnd: () => number,
+    placement: "vein" | "embedded" = "vein",
   ): CrystalInstance[] {
     const out: CrystalInstance[] = [];
     const spacing = 1 / MAX_DENSITY;
@@ -471,7 +473,7 @@ class CrystalStroke implements StrokeInstance {
       if (i > 0) travelled += samples[i].local.distanceTo(samples[i - 1].local);
       if (travelled < nextAt) continue;
       nextAt = travelled + spacing * (0.75 + rnd() * 0.5);
-      this.cluster(out, samples[i], travelled, rnd);
+      this.cluster(out, samples[i], travelled, rnd, placement);
     }
     return out;
   }
@@ -516,8 +518,8 @@ class CrystalStroke implements StrokeInstance {
     const clusterRnd = rnd();
     const shardCountRnd = rnd();
     // Embedded (coverage) clusters hug the face; vein (paint) clusters can sprawl.
-    const offMul = placement === "embedded" ? 0.28 : 1;
-    const sinkMul = placement === "embedded" ? 1.35 : 1;
+    const offMul = placement === "embedded" ? 0.4 : 1;
+    const sinkMul = placement === "embedded" ? 0.85 : 1;
 
     const add = (
       kind: CrystalKind,
@@ -770,7 +772,7 @@ export const crystalMode: PaintMode<CrystalSettings> = {
   },
 };
 
-/** Random surface-fill stroke (one cluster per sample, sequential growth births). */
+/** Coverage fill: one crystal cluster per surface sample (veins + packed dots). */
 export function createCoverageCrystalStroke(
   samples: SurfaceSample[],
   seed: number,
