@@ -7,6 +7,7 @@ import { SurfacePainter } from "./surfacePainter";
 import type { PaintMode, StrokeInstance, SurfaceSample } from "./modes/mode";
 import { mulberry32 } from "./modes/mode";
 import {
+  createCoverageCrystalStroke,
   crystalMode,
   defaultCrystalSettings,
   prepareCrystalGoldMaps,
@@ -31,6 +32,7 @@ import {
   type RockTextures,
 } from "./rockGeometry";
 import { createGoldFlecks } from "./goldFlecks";
+import { sampleRockSurfaceByCoverage } from "./crystalCoverage";
 import { buildGui } from "./ui";
 
 export type ModeName =
@@ -51,6 +53,22 @@ interface CompanionSpec {
   /** How many crystal clusters to seed on this rock. */
   crystalClusters: number;
   flecks: number;
+}
+
+/**
+ * Tiny side debris that drifts in place — explosion shrapnel that shrinks with
+ * distance from the main mass. Animated each frame; never a paint target.
+ */
+interface FloatingDebris {
+  mesh: THREE.Mesh;
+  rest: THREE.Vector3;
+  /** Per-axis bob amplitude (world units) — smaller chips drift less. */
+  amp: THREE.Vector3;
+  /** Angular frequencies for the position bob. */
+  freq: THREE.Vector3;
+  phase: THREE.Vector3;
+  /** Slow tumble rates (rad/s). */
+  spin: THREE.Vector3;
 }
 
 interface Stroke {
@@ -131,11 +149,19 @@ export class App {
 
   /** Initial crystals on companion rocks — updated each frame, ignored by undo/clear. */
   private sceneryStrokes: StrokeInstance[] = [];
+  /**
+   * Random surface fill on the main rock from `crystal.surfaceCoverage`.
+   * Separate from painted strokes so Clear/Undo only affect what the user drew.
+   */
+  private coverageStroke: StrokeInstance | null = null;
   /** The backlight/kicker pair, scaled together by the Backlight slider. */
   private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
 
   /** Mouse-driven tilt: target from pointer position, smoothed onto floatRoot each frame. */
   private tiltTarget = new THREE.Vector2(0, 0);
+
+  /** Side shrapnel chips — subtle space drift around the main rock. */
+  private floatingDebris: FloatingDebris[] = [];
 
   private hud = document.getElementById("hud")!;
   private lastTime = 0;
@@ -166,7 +192,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 13;
+    this.controls.minDistance = 1;
     this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -327,9 +353,59 @@ export class App {
 
     this.floatRoot.add(this.mainRock);
     this.addCompanionRocks(textures);
+    this.addFloatingShrapnel(textures);
     this.scene.add(this.floatRoot);
     // Only the canvas rock is paintable — companions are scenery.
     indexForRaycasts(this.rock);
+
+    // Percentage fill before any painting — same dial a host monorepo can set.
+    this.rebuildMainRockCoverage(false);
+  }
+
+  /**
+   * Fill the main rock with random crystal clusters covering `surfaceCoverage`
+   * of the surface (0..1). Safe to call again when coverage or seed changes.
+   * @param animate — if true, clusters grow in; if false, snap fully grown.
+   */
+  rebuildMainRockCoverage(animate: boolean): void {
+    if (this.coverageStroke) {
+      this.paintRoot.remove(this.coverageStroke.group);
+      this.coverageStroke.dispose();
+      this.coverageStroke = null;
+    }
+
+    const coverage = THREE.MathUtils.clamp(this.crystal.surfaceCoverage, 0, 1);
+    if (coverage <= 0 || !this.rock) return;
+
+    const samples = sampleRockSurfaceByCoverage(this.rock.geometry, {
+      coverage,
+      seed: this.effectiveSeed(0xc0ff),
+      crystalSize: this.crystal.crystalSize,
+      spread: this.crystal.spread,
+    });
+    if (samples.length === 0) return;
+
+    // Density locked at max so the coverage % alone controls fill amount.
+    const stroke = createCoverageCrystalStroke(
+      samples,
+      this.effectiveSeed(0xc0a1),
+      {
+        ...this.crystal,
+        clusterDensity: 16,
+      },
+    );
+    this.paintRoot.add(stroke.group);
+    this.coverageStroke = stroke;
+    if (!animate) stroke.finishGrowth();
+  }
+
+  /**
+   * Monorepo/API entry: set how much of the rock is randomly crystal-covered (0..1).
+   * Example: `app.setSurfaceCoverage(0.65)` ≈ 65% fill.
+   */
+  setSurfaceCoverage(coverage: number): void {
+    this.crystal.surfaceCoverage = THREE.MathUtils.clamp(coverage, 0, 1);
+    this.rebuildMainRockCoverage(false);
   }
 
   /**
@@ -634,6 +710,94 @@ export class App {
     }
   }
 
+  /**
+   * Extra side chips — denser near the main rock, shrinking outward like blast
+   * shrapnel. Each piece drifts and tumbles very slightly so the set feels
+   * weightless without stealing focus from the specimen.
+   */
+  private addFloatingShrapnel(textures: RockTextures): void {
+    const COUNT = 44;
+    const NEAR = 2.55; // clear of the main silhouette — no overlap
+    const FAR = 3.45; // still reads as part of the same cluster
+    const rnd = mulberry32(0x5f9a); // fixed seed so the field stays stable across reloads
+
+    for (let i = 0; i < COUNT; i++) {
+      // Prefer the sides: full azimuth, compressed vertical so chips hug the equator.
+      const azimuth = rnd() * Math.PI * 2;
+      const elev = (rnd() - 0.5) * 1.15; // ~±33°
+      const t = rnd(); // 0 near → 1 far
+      // Bias a few chips closer so the field densifies toward the main mass.
+      const distT = t * t;
+
+      // Size falls off with distance — near chips ~chunk, far ones ~dust.
+      // Occasional near pieces punch larger so the field isn't all pebbles.
+      const base = 0.2 * Math.pow(1 - distT, 1.25) + 0.03;
+      const chunkBoost = distT < 0.35 && rnd() > 0.62 ? 1.35 + rnd() * 0.45 : 1;
+      const scale = base * chunkBoost * (0.85 + rnd() * 0.35);
+
+      // Push centers out by their own radius so bigger chips never kiss the main mass.
+      const dist = NEAR + distT * (FAR - NEAR) + scale * 0.9;
+
+      const cosE = Math.cos(elev);
+      const x = Math.cos(azimuth) * cosE * dist;
+      const y = Math.sin(elev) * dist * 0.85;
+      const z = Math.sin(azimuth) * cosE * dist;
+
+      const detail = scale > 0.12 ? 4 : scale > 0.07 ? 3 : 2;
+
+      const geo = createRockGeometry(textures.displacementMap, {
+        detail,
+        scale,
+        seed: 400 + i * 17.3 + rnd() * 9,
+      });
+      const mat = createRockMaterial(textures);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z);
+      mesh.rotation.set(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
+      mesh.castShadow = scale > 0.06;
+      mesh.receiveShadow = false;
+      mesh.raycast = () => {};
+
+      // Only the chunkier near chips get a fleck — keeps the field quiet.
+      if (scale > 0.1 && rnd() > 0.5) {
+        mesh.add(
+          createGoldFlecks(geo, {
+            veinCount: scale > 0.18 ? 2 : 1,
+            seed: 9000 + i * 31,
+          }),
+        );
+      }
+
+      // Drift amplitude scales with size so tiny chips barely move.
+      const drift = 0.012 + scale * 0.2;
+      this.floatingDebris.push({
+        mesh,
+        rest: new THREE.Vector3(x, y, z),
+        amp: new THREE.Vector3(
+          drift * (0.7 + rnd() * 0.6),
+          drift * (0.9 + rnd() * 0.7),
+          drift * (0.7 + rnd() * 0.6),
+        ),
+        freq: new THREE.Vector3(
+          0.18 + rnd() * 0.22,
+          0.14 + rnd() * 0.18,
+          0.16 + rnd() * 0.2,
+        ),
+        phase: new THREE.Vector3(
+          rnd() * Math.PI * 2,
+          rnd() * Math.PI * 2,
+          rnd() * Math.PI * 2,
+        ),
+        spin: new THREE.Vector3(
+          (rnd() - 0.5) * 0.055,
+          (rnd() - 0.5) * 0.07,
+          (rnd() - 0.5) * 0.045,
+        ),
+      });
+      this.floatRoot.add(mesh);
+    }
+  }
+
   /** Post: MSAA scene pass + bloom + a gentle lens vignette, tone-mapped on output. */
   private setupPost(): void {
     const scenePass = pass(this.scene, this.camera, { samples: 4 });
@@ -733,7 +897,21 @@ export class App {
       if (s.applySettings) s.applySettings(this.settingsFor(mode));
       else needRebuild = true;
     }
+    // Keep the random fill in sync with crystal look, but density stays max so
+    // surfaceCoverage remains the only fill-amount control for that stroke.
+    if (mode === "Crystals" && this.coverageStroke?.applySettings) {
+      this.coverageStroke.applySettings({
+        ...this.crystal,
+        clusterDensity: 16,
+      });
+    }
     if (needRebuild) this.scheduleRegrow("instant");
+  }
+
+  /** Reseed painted strokes and the random surface fill together. */
+  reseedAll(mode: "instant" | "animate"): void {
+    this.scheduleRegrow(mode);
+    this.rebuildMainRockCoverage(mode === "animate");
   }
 
   setGlow(v: number): void {
@@ -863,6 +1041,7 @@ export class App {
     this.painter.update(dt);
     for (const s of this.live) s.update(dt, tSec);
     for (const s of this.sceneryStrokes) s.update(dt, tSec);
+    this.coverageStroke?.update(dt, tSec);
 
     // All rocks share floatRoot — ease toward the mouse tilt (no idle spin).
     this.floatRoot.rotation.x = THREE.MathUtils.damp(
@@ -877,6 +1056,19 @@ export class App {
       5,
       dt,
     );
+
+    // Shrapnel chips: soft sine drift + slow tumble — space dust, not orbiting moons.
+    for (const d of this.floatingDebris) {
+      const { mesh, rest, amp, freq, phase, spin } = d;
+      mesh.position.set(
+        rest.x + Math.sin(tSec * freq.x + phase.x) * amp.x,
+        rest.y + Math.sin(tSec * freq.y + phase.y) * amp.y,
+        rest.z + Math.cos(tSec * freq.z + phase.z) * amp.z,
+      );
+      mesh.rotation.x += spin.x * dt;
+      mesh.rotation.y += spin.y * dt;
+      mesh.rotation.z += spin.z * dt;
+    }
 
     this.post.render();
   }
