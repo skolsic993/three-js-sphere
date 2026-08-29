@@ -160,7 +160,7 @@ export class App {
     // Transparent canvas — page shows through; no sky dome / fog wash.
     this.scene.background = null;
     this.scene.fog = null;
-    this.camera.position.set(6.4, 1.7, 5.6);
+    this.camera.position.set(25, 1.7, 5.6);
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
