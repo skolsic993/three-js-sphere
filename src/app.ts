@@ -89,7 +89,7 @@ export class App {
   }
 
   private renderer!: THREE.WebGPURenderer;
-  private post!: THREE.PostProcessing;
+  private post!: THREE.RenderPipeline;
   private bloomNode!: ReturnType<typeof bloom>;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
@@ -132,14 +132,14 @@ export class App {
     this.renderer = renderer;
 
     this.scene.background = new THREE.Color(0x0a0b10);
-    this.scene.fog = new THREE.Fog(0x0a0b10, 9, 22);
-    this.camera.position.set(2.7, 1.15, 3.3);
+    this.scene.fog = new THREE.Fog(0x0a0b10, 10, 22);
+    this.camera.position.set(3.7, 1.15, 3.3);
 
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 1.6;
-    this.controls.maxDistance = 10;
+    this.controls.minDistance = 3;
+    this.controls.maxDistance = 7;
     this.controls.target.set(0, -0.05, 0);
     // Keep the camera above the horizon so you can't tumble under the floor.
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
