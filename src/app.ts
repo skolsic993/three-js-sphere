@@ -1,10 +1,11 @@
 import * as THREE from "three/webgpu";
-import { float, pass, screenUV, smoothstep, vec2 } from "three/tsl";
+import { float, pass, screenUV, smoothstep, vec2, vec4 } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { indexForRaycasts } from "./bvh";
 import { SurfacePainter } from "./surfacePainter";
 import type { PaintMode, StrokeInstance, SurfaceSample } from "./modes/mode";
+import { mulberry32 } from "./modes/mode";
 import {
   crystalMode,
   defaultCrystalSettings,
@@ -27,6 +28,7 @@ import {
   createRockGeometry,
   createRockMaterial,
   loadRockTextures,
+  type RockTextures,
 } from "./rockGeometry";
 import { createGoldFlecks } from "./goldFlecks";
 import { buildGui } from "./ui";
@@ -38,6 +40,18 @@ export type ModeName =
   | "Bioluminescent reef";
 
 const GROUND_Y = -2.05; // the floor the rock floats above
+
+/** Scenery rocks that sit under / around the canvas — not paint targets. */
+interface CompanionSpec {
+  seed: number;
+  scale: number;
+  detail: number;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  /** How many crystal clusters to seed on this rock. */
+  crystalClusters: number;
+  flecks: number;
+}
 
 interface Stroke {
   samples: SurfaceSample[];
@@ -113,8 +127,8 @@ export class App {
   private live: StrokeInstance[] = [];
   private strokeCounter = 0;
 
-  private dust!: THREE.Points;
-  private dustVel: number[] = [];
+  /** Initial crystals on companion rocks — updated each frame, ignored by undo/clear. */
+  private sceneryStrokes: StrokeInstance[] = [];
   /** The backlight/kicker pair, scaled together by the Backlight slider. */
   private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
 
@@ -129,9 +143,10 @@ export class App {
   constructor(private container: HTMLElement) {}
 
   async start(): Promise<void> {
-    const renderer = new THREE.WebGPURenderer({ antialias: true });
+    const renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true });
     await renderer.init();
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = this.settings.exposure;
     renderer.shadowMap.enabled = true;
@@ -139,8 +154,9 @@ export class App {
     this.container.appendChild(renderer.domElement);
     this.renderer = renderer;
 
-    this.scene.background = new THREE.Color(0x0a0b10);
-    this.scene.fog = new THREE.Fog(0x0a0b10, 10, 22);
+    // Transparent canvas — page shows through; no sky dome / fog wash.
+    this.scene.background = null;
+    this.scene.fog = null;
     this.camera.position.set(6.4, 1.7, 5.6);
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
@@ -148,15 +164,13 @@ export class App {
     this.controls.minDistance = 12;
     this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
-    // Keep the camera above the horizon so you can't tumble under the floor.
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
     this.setupEnvironment();
     this.setupLights();
-    await this.setupCanvasRock();
     await prepareCrystalGoldMaps();
     setCrystalGlow(this.crystal.glow);
-    this.setupDust();
+    await this.setupCanvasRock();
     this.setupPost();
 
     this.painter = new SurfacePainter(
@@ -192,14 +206,11 @@ export class App {
     renderer.setAnimationLoop((t) => this.tick(t));
   }
 
-  // ---------- environment: a dark studio captured into a PMREM env map ----------
+  // ---------- environment: a sunny outdoor sky captured into a PMREM env map ----------
 
   /**
-   * The "perfect light set" starts here: crystals and the lacquered sphere are mostly
-   * REFLECTION, so what matters most is what there is to reflect. We build a black studio
-   * with a huge overhead softbox, a cool strip camera-left, a warm strip camera-right and a
-   * violet wash behind — classic three-point product lighting — and prefilter it into the
-   * environment map. Every glossy highlight in the scene is one of these shapes.
+   * Daylight reflections for metal gold: a bright sun disk, open blue sky, and a warm
+   * ground bounce — so scratched-gold facets pick up outdoor speculars instead of studio strips.
    */
   private setupEnvironment(): void {
     const env = new THREE.Scene();
@@ -221,16 +232,12 @@ export class App {
       env.add(m);
     };
 
-    panel(0xfff6ea, 9, 4.5, 3, [1.5, 8, 2]); // overhead softbox, biased toward camera
-    panel(0xffffff, 22, 0.7, 4.5, [-2.5, 5, -6]); // hard top-back strip — facet glints
-    panel(0x9db8ff, 5, 1.2, 7, [-7, 2, -2]); // cool strip, camera-left
-    panel(0xffd9b0, 3.5, 1.6, 5, [6, 1.5, 3]); // warm strip, camera-right
-    panel(0x8a5cff, 4, 6, 3.5, [0, 2.5, -8]); // violet wash behind the subject
-    panel(0x2e3c58, 1.2, 9, 9, [0, -5, 0]); // dim floor bounce
-    // Hot gold-biased glints — metals need bright things to reflect; rock keeps low envMapIntensity.
-    panel(0xffe6b0, 40, 0.35, 3.2, [-1.2, 6.5, 4]);
-    panel(0xffffff, 55, 0.25, 2.4, [2.8, 5.5, -3.5]);
-    panel(0xffc878, 28, 0.5, 1.8, [5, 4, 1]);
+    panel(0xfff4d6, 55, 1.2, 1.2, [4, 9, 3]); // sun disk
+    panel(0xffe8b8, 18, 3.5, 2.5, [2, 8, 1]); // sun haze
+    panel(0xa8c8f0, 4, 14, 8, [0, 6, -4]); // open blue sky dome
+    panel(0xd8e8ff, 2.5, 10, 5, [-5, 4, 2]); // cool sky fill, camera-left
+    panel(0xffe2b0, 3, 8, 4, [5, 2, 4]); // warm late-day rim
+    panel(0xc4a882, 1.8, 12, 12, [0, -6, 0]); // sandy ground bounce
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(env, 0.04).texture;
@@ -240,92 +247,43 @@ export class App {
   }
 
   /**
-   * A cinematic three-point rig, tuned like a product macro shot:
-   *  - KEY: a focused warm spot from top-front-right with a soft penumbra — a pool of
-   *    light on the subject instead of a flat wash over the whole set.
-   *  - BACKLIGHT + KICKER: cool violet-blue from behind. These are what make the
-   *    transmissive crystals GLOW from within (transmission responds to light arriving
-   *    from behind the surface) — the signature of the reference look.
-   *  - FILL: a whisper of hemisphere so shadows never crush to pure black.
+   * Outdoor sun key + soft sky fill — warm daylight on the charcoal rock.
+   * No floor or sky mesh: the canvas stays fully transparent for compositing.
    */
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0x8ea0c8, 0x0c0a14, 0.32);
+    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0xc4a882, 0.55);
 
-    const key = new THREE.SpotLight(0xfff2e2, 85, 0, Math.PI / 4.2, 0.55, 1.6);
-    key.position.set(3.4, 5.6, 2.6);
+    const key = new THREE.SpotLight(0xfff2d8, 70, 0, Math.PI / 3.8, 0.45, 1.4);
+    key.position.set(4.2, 7.2, 3.2);
     key.target.position.set(0, 0, 0);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.near = 1;
-    key.shadow.camera.far = 20;
+    key.shadow.camera.far = 24;
     key.shadow.bias = -0.0004;
     key.shadow.normalBias = 0.02;
-    key.shadow.radius = 5; // soft penumbra under the floating sphere
+    key.shadow.radius = 4;
 
-    // Soft fill so charcoal facets don't crush to pure black (texture stays readable).
-    const fill = new THREE.DirectionalLight(0xb8c4e0, 1.6);
-    fill.position.set(-2.2, 3.5, 4.5);
+    const fill = new THREE.DirectionalLight(0xc5d8f0, 1.4);
+    fill.position.set(-3.5, 4, 3.5);
 
-    const back = new THREE.DirectionalLight(0xa9b8ff, 2.4);
-    back.position.set(-3, 3.2, -4.5);
-    const kick = new THREE.DirectionalLight(0xcaa6ff, 1.2);
-    kick.position.set(4.5, 1.2, -3);
-    // Warm specular kick — metals drink this; rock is rough so it barely shows.
+    const back = new THREE.DirectionalLight(0xd0e4ff, 1.2);
+    back.position.set(-2.5, 4, -5);
+    const kick = new THREE.DirectionalLight(0xffe0b0, 1.1);
+    kick.position.set(5, 2, -2.5);
     const goldKick = new THREE.DirectionalLight(0xffe2a8, 4.2);
-    goldKick.position.set(-1.5, 7, 3.5);
+    goldKick.position.set(3, 8, 2);
 
     this.backLights = [
-      { light: back, base: 2.4 },
-      { light: kick, base: 1.2 },
+      { light: back, base: 1.2 },
+      { light: kick, base: 1.1 },
     ];
 
-    // Faint violet underglow: lifts the sphere's shadowed underside off the floor,
-    // selling the "floating" read.
-    const under = new THREE.PointLight(0x6a4bd6, 0.4, 6, 1.6);
-    under.position.set(0, GROUND_Y + 0.25, 0);
+    // Soft bounce from below so the rock's underside doesn't crush to black.
+    const under = new THREE.PointLight(0xe8c898, 0.4, 7, 1.6);
+    under.position.set(0, GROUND_Y + 0.35, 0);
 
-    // The floor: near-black satin with a soft radial sheen, mostly there to catch the
-    // sphere's soft shadow and the crystals' colored bounce.
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(14, 64),
-      new THREE.MeshPhysicalMaterial({
-        map: makeFloorTexture(),
-        color: 0xffffff,
-        roughness: 0.95,
-        metalness: 0,
-        // The grey wash on a dark floor is SPECULAR (the huge overhead softbox reflected
-        // by a rough surface), not albedo — so dim both specular paths hard.
-        specularIntensity: 0.15,
-        envMapIntensity: 0.15,
-      }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = GROUND_Y;
-    ground.receiveShadow = true;
-
-    // Backdrop: a huge inward-facing sphere with soft violet blooms over near-black,
-    // like the defocused studio behind a macro lens. Unlit and unfogged.
-    const backdrop = new THREE.Mesh(
-      new THREE.SphereGeometry(30, 32, 16),
-      new THREE.MeshBasicMaterial({
-        map: makeBackdropTexture(),
-        side: THREE.BackSide,
-        fog: false,
-      }),
-    );
-
-    this.scene.add(
-      hemi,
-      key,
-      key.target,
-      fill,
-      back,
-      kick,
-      goldKick,
-      under,
-      ground,
-      backdrop,
-    );
+    this.scene.add(hemi, key, key.target, fill, back, kick, goldKick, under);
   }
 
   /** The canvas itself: a jagged dark rock with Poly Haven PBR maps — quiet stage for crystals.
@@ -341,38 +299,211 @@ export class App {
 
     const flecks = createGoldFlecks(geo, { veinCount: 10, seed: 0x601d });
     this.floatRoot.add(this.rock, flecks, this.paintRoot);
+    this.addCompanionRocks(textures);
     this.scene.add(this.floatRoot);
-    indexForRaycasts(this.floatRoot);
+    // Only the canvas rock is paintable — companions are scenery.
+    indexForRaycasts(this.rock);
   }
 
-  /** A whisper of drifting dust — depth cue and atmosphere, kept deliberately subtle. */
-  private setupDust(): void {
-    const N = 320;
-    const positions = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      const r = 1.9 + Math.random() * 4.5;
-      const a = Math.random() * Math.PI * 2;
-      positions[i * 3] = Math.cos(a) * r;
-      positions[i * 3 + 1] = GROUND_Y + 0.1 + Math.random() * 4.2;
-      positions[i * 3 + 2] = Math.sin(a) * r;
-      this.dustVel.push(0.02 + Math.random() * 0.05);
+  /**
+   * Smaller debris rocks under and around the main specimen — same charcoal/gold material,
+   * each with a couple of seeded crystal clusters so the set reads as one mineral family.
+   */
+  private addCompanionRocks(textures: RockTextures): void {
+    const companions: CompanionSpec[] = [
+      // Beneath — medium chunks, spaced well clear of the main mass.
+      {
+        seed: 11.3,
+        scale: 0.72,
+        detail: 5,
+        position: [-2.1, -1.55, 0.85],
+        rotation: [0.35, 1.1, -0.2],
+        crystalClusters: 2,
+        flecks: 3,
+      },
+      {
+        seed: 22.7,
+        scale: 0.52,
+        detail: 4,
+        position: [2.0, -1.7, -1.1],
+        rotation: [-0.4, 0.6, 0.5],
+        crystalClusters: 2,
+        flecks: 2,
+      },
+      {
+        seed: 33.1,
+        scale: 0.38,
+        detail: 4,
+        position: [0.35, -1.9, 1.85],
+        rotation: [0.6, -0.8, 0.15],
+        crystalClusters: 1,
+        flecks: 2,
+      },
+      {
+        seed: 88.2,
+        scale: 0.45,
+        detail: 4,
+        position: [-1.7, -1.85, -1.6],
+        rotation: [0.25, -0.5, 0.8],
+        crystalClusters: 1,
+        flecks: 2,
+      },
+      {
+        seed: 91.6,
+        scale: 0.3,
+        detail: 4,
+        position: [1.6, -2.0, 1.4],
+        rotation: [-0.7, 1.0, -0.3],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      // Around — tiny satellites further out from the silhouette.
+      {
+        seed: 44.9,
+        scale: 0.2,
+        detail: 3,
+        position: [-3.2, 0.2, 1.7],
+        rotation: [0.9, 0.3, -0.5],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 55.2,
+        scale: 0.16,
+        detail: 3,
+        position: [3.1, -0.35, 2.0],
+        rotation: [-0.5, 1.4, 0.7],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 66.8,
+        scale: 0.14,
+        detail: 3,
+        position: [-2.6, 0.65, -2.7],
+        rotation: [0.2, -1.2, 0.9],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 77.4,
+        scale: 0.12,
+        detail: 3,
+        position: [2.9, 0.4, -2.2],
+        rotation: [1.1, 0.5, -0.3],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+      {
+        seed: 102.1,
+        scale: 0.18,
+        detail: 3,
+        position: [-3.4, -0.5, -0.6],
+        rotation: [0.4, 1.8, 0.2],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 113.5,
+        scale: 0.15,
+        detail: 3,
+        position: [3.3, 0.55, 0.4],
+        rotation: [-0.8, 0.2, 1.1],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 124.8,
+        scale: 0.13,
+        detail: 3,
+        position: [0.9, -0.7, -3.3],
+        rotation: [0.6, -0.9, -0.4],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+      {
+        seed: 135.3,
+        scale: 0.11,
+        detail: 3,
+        position: [-0.8, 0.9, 3.1],
+        rotation: [1.3, 0.7, 0.15],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+      {
+        seed: 146.7,
+        scale: 0.17,
+        detail: 3,
+        position: [2.2, -1.1, 2.8],
+        rotation: [-0.3, 1.5, 0.6],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 157.9,
+        scale: 0.1,
+        detail: 3,
+        position: [-2.8, -0.9, 2.4],
+        rotation: [0.85, -0.4, 1.2],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+    ];
+
+    const scenerySettings: CrystalSettings = {
+      ...defaultCrystalSettings,
+      crystalSize: 0.09,
+      clusterDensity: 8,
+      shards: 5,
+      spread: 1.8,
+      glow: 0,
+    };
+
+    for (const spec of companions) {
+      const geo = createRockGeometry(textures.displacementMap, {
+        detail: spec.detail,
+        scale: spec.scale,
+        seed: spec.seed,
+      });
+      // Share maps; each mesh needs its own material instance for safe disposal later.
+      const mat = createRockMaterial(textures);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(...spec.position);
+      mesh.rotation.set(...spec.rotation);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.raycast = () => {}; // never a paint target
+
+      if (spec.flecks > 0) {
+        mesh.add(
+          createGoldFlecks(geo, {
+            veinCount: spec.flecks,
+            seed: Math.floor(spec.seed * 1000),
+          }),
+        );
+      }
+
+      if (spec.crystalClusters > 0) {
+        const samples = sampleRockSurface(
+          geo,
+          spec.crystalClusters,
+          Math.floor(spec.seed * 7919),
+        );
+        const stroke = crystalMode.createStroke(
+          samples,
+          Math.floor(spec.seed * 9973),
+          {
+            ...scenerySettings,
+            crystalSize: scenerySettings.crystalSize * (0.7 + spec.scale * 0.5),
+          },
+        );
+        stroke.finishGrowth();
+        mesh.add(stroke.group);
+        this.sceneryStrokes.push(stroke);
+      }
+
+      this.floatRoot.add(mesh);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    this.dust = new THREE.Points(
-      geo,
-      new THREE.PointsMaterial({
-        color: 0x9db4e8,
-        size: 0.02,
-        transparent: true,
-        opacity: 0.45,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        sizeAttenuation: true,
-      }),
-    );
-    this.dust.frustumCulled = false;
-    this.scene.add(this.dust);
   }
 
   /** Post: MSAA scene pass + bloom + a gentle lens vignette, tone-mapped on output. */
@@ -385,13 +516,13 @@ export class App {
       0.6,
       this.settings.bloomThreshold,
     );
-    // Vignette: full exposure in the middle, ~35% falloff into the corners — pulls the
-    // eye to the subject the way a fast lens does.
     const vignette = float(1).sub(
-      smoothstep(0.5, 0.92, screenUV.distance(vec2(0.5, 0.5))).mul(0.35),
+      smoothstep(0.55, 0.98, screenUV.distance(vec2(0.5, 0.5))).mul(0.18),
     );
+    // Keep scene alpha so empty pixels stay transparent through bloom/vignette.
+    const lit = color.add(this.bloomNode);
     this.post = new THREE.PostProcessing(this.renderer);
-    this.post.outputNode = color.add(this.bloomNode).mul(vignette);
+    this.post.outputNode = vec4(lit.rgb.mul(vignette), color.a);
   }
 
   // ---------- strokes ----------
@@ -600,76 +731,49 @@ export class App {
       }
     }
 
-    // Dust drifts upward and wraps.
-    const posAttr = this.dust.geometry.getAttribute(
-      "position",
-    ) as THREE.BufferAttribute;
-    const arr = posAttr.array as Float32Array;
-    for (let i = 0; i < this.dustVel.length; i++) {
-      arr[i * 3 + 1] += this.dustVel[i] * dt;
-      if (arr[i * 3 + 1] > GROUND_Y + 4.4) arr[i * 3 + 1] = GROUND_Y + 0.1;
-    }
-    posAttr.needsUpdate = true;
-
     this.controls.update();
     this.painter.update(dt);
     for (const s of this.live) s.update(dt, tSec);
+    for (const s of this.sceneryStrokes) s.update(dt, tSec);
 
     this.post.render();
   }
 }
 
 /**
- * The out-of-focus studio behind the subject: near-black with two soft violet/blue blooms,
- * like distant practicals through a wide-open lens. Painted once onto a canvas and wrapped
- * on an inward-facing sphere.
+ * Pick a few outward-facing surface points on a rock mesh to seed scenery crystals.
+ * Prefer upper hemisphere so clusters read against the sky instead of hiding under the rock.
  */
-function makeBackdropTexture(): THREE.CanvasTexture {
-  const w = 1024;
-  const h = 512;
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#06070b";
-  ctx.fillRect(0, 0, w, h);
-
-  const blob = (x: number, y: number, r: number, rgba: string): void => {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, rgba);
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-  };
-  blob(w * 0.3, h * 0.38, 280, "rgba(74, 52, 138, 0.34)"); // violet bloom, camera-left
-  blob(w * 0.78, h * 0.45, 220, "rgba(40, 58, 118, 0.22)"); // cooler bloom, camera-right
-  blob(w * 0.55, h * 0.2, 180, "rgba(120, 100, 190, 0.10)"); // faint high sparkle wash
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-/** Near-black satin floor with a soft radial sheen — a quiet stage for the sphere's shadow. */
-function makeFloorTexture(): THREE.CanvasTexture {
-  const size = 512;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  const g = ctx.createRadialGradient(
-    size / 2,
-    size / 2,
-    0,
-    size / 2,
-    size / 2,
-    size / 2,
-  );
-  g.addColorStop(0, "#0f1118");
-  g.addColorStop(0.45, "#0b0c12");
-  g.addColorStop(1, "#08090d");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+function sampleRockSurface(
+  geo: THREE.BufferGeometry,
+  count: number,
+  seed: number,
+): SurfaceSample[] {
+  geo.computeVertexNormals();
+  const pos = geo.getAttribute("position") as THREE.BufferAttribute;
+  const nrm = geo.getAttribute("normal") as THREE.BufferAttribute;
+  const rnd = mulberry32(seed);
+  const candidates: number[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    if (nrm.getY(i) > 0.15) candidates.push(i);
+  }
+  const pool =
+    candidates.length > 0 ? candidates : [...Array(pos.count).keys()];
+  const samples: SurfaceSample[] = [];
+  for (let c = 0; c < count; c++) {
+    const i = pool[Math.floor(rnd() * pool.length)]!;
+    const local = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+    const localNormal = new THREE.Vector3(
+      nrm.getX(i),
+      nrm.getY(i),
+      nrm.getZ(i),
+    ).normalize();
+    samples.push({
+      position: local.clone(),
+      normal: localNormal.clone(),
+      local,
+      localNormal,
+    });
+  }
+  return samples;
 }
