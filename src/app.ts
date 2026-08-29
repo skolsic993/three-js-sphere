@@ -1,10 +1,10 @@
 import * as THREE from "three/webgpu";
-import {float, pass, screenUV, smoothstep, vec2} from "three/tsl";
-import {bloom} from "three/addons/tsl/display/BloomNode.js";
-import {OrbitControls} from "three/addons/controls/OrbitControls.js";
-import {indexForRaycasts} from "./bvh";
-import {SurfacePainter} from "./surfacePainter";
-import type {PaintMode, StrokeInstance, SurfaceSample} from "./modes/mode";
+import { float, pass, screenUV, smoothstep, vec2 } from "three/tsl";
+import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { indexForRaycasts } from "./bvh";
+import { SurfacePainter } from "./surfacePainter";
+import type { PaintMode, StrokeInstance, SurfaceSample } from "./modes/mode";
 import {
   crystalMode,
   defaultCrystalSettings,
@@ -21,7 +21,14 @@ import {
   defaultAuroraSettings,
   type AuroraSettings,
 } from "./modes/aurora";
-import {defaultReefSettings, reefMode, type ReefSettings} from "./modes/reef";
+import { defaultReefSettings, reefMode, type ReefSettings } from "./modes/reef";
+import {
+  createRockGeometry,
+  createRockMaterial,
+  loadRockTextures,
+} from "./rockGeometry";
+import { createGoldFlecks } from "./goldFlecks";
+import { buildGui } from "./ui";
 
 export type ModeName =
   | "Crystals"
@@ -29,7 +36,7 @@ export type ModeName =
   | "Aurora silk"
   | "Bioluminescent reef";
 
-const GROUND_Y = -1.55; // the floor the sphere floats above
+const GROUND_Y = -1.55; // the floor the rock floats above
 
 interface Stroke {
   samples: SurfaceSample[];
@@ -61,10 +68,10 @@ export class App {
     bloomThreshold: 0.75,
   };
 
-  readonly crystal: CrystalSettings = {...defaultCrystalSettings};
-  readonly fissure: FissureSettings = {...defaultFissureSettings};
-  readonly aurora: AuroraSettings = {...defaultAuroraSettings};
-  readonly reef: ReefSettings = {...defaultReefSettings};
+  readonly crystal: CrystalSettings = { ...defaultCrystalSettings };
+  readonly fissure: FissureSettings = { ...defaultFissureSettings };
+  readonly aurora: AuroraSettings = { ...defaultAuroraSettings };
+  readonly reef: ReefSettings = { ...defaultReefSettings };
 
   /** Registry of painting modes — new modes plug in here. */
   private modes: Record<ModeName, PaintMode<unknown>> = {
@@ -78,13 +85,13 @@ export class App {
   private settingsFor(mode: ModeName): unknown {
     switch (mode) {
       case "Crystals":
-        return {...this.crystal};
+        return { ...this.crystal };
       case "Molten fissures":
-        return {...this.fissure};
+        return { ...this.fissure };
       case "Aurora silk":
-        return {...this.aurora};
+        return { ...this.aurora };
       case "Bioluminescent reef":
-        return {...this.reef};
+        return { ...this.reef };
     }
   }
 
@@ -96,9 +103,9 @@ export class App {
   private controls!: OrbitControls;
   private painter!: SurfacePainter;
 
-  /** The floating canvas: sphere + everything painted on it bob and turn together. */
+  /** The floating canvas: rock + everything painted on it bob and turn together. */
   private floatRoot = new THREE.Group();
-  private sphere!: THREE.Mesh;
+  private rock!: THREE.Mesh;
   private paintRoot = new THREE.Group(); // strokes parent here (child of floatRoot)
 
   private strokes: Stroke[] = [];
@@ -108,20 +115,20 @@ export class App {
   private dust!: THREE.Points;
   private dustVel: number[] = [];
   /** The backlight/kicker pair, scaled together by the Backlight slider. */
-  private backLights: {light: THREE.DirectionalLight; base: number}[] = [];
+  private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
 
   private hud = document.getElementById("hud")!;
   private lastTime = 0;
   private hovering = false;
   private toastTimer = 0;
-  private regrowPending: {mode: "instant" | "animate"} | null = null;
+  private regrowPending: { mode: "instant" | "animate" } | null = null;
   private lastRegrowAt = 0;
   private regrowCost = 0;
 
   constructor(private container: HTMLElement) {}
 
   async start(): Promise<void> {
-    const renderer = new THREE.WebGPURenderer({antialias: true});
+    const renderer = new THREE.WebGPURenderer({ antialias: true });
     await renderer.init();
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -146,7 +153,7 @@ export class App {
 
     this.setupEnvironment();
     this.setupLights();
-    this.setupCanvasSphere();
+    await this.setupCanvasRock();
     this.setupDust();
     this.setupPost();
 
@@ -154,7 +161,7 @@ export class App {
       renderer.domElement,
       this.camera,
       this.scene,
-      () => [this.sphere],
+      () => [this.rock],
       this.floatRoot,
     );
     this.painter.onStroke = (samples) => this.addStroke(samples);
@@ -166,7 +173,7 @@ export class App {
       this.updateHud();
     };
 
-    // buildGui(this);
+    buildGui(this);
     this.applyModes();
 
     document
@@ -203,7 +210,7 @@ export class App {
       h: number,
       pos: [number, number, number],
     ): void => {
-      const mat = new THREE.MeshBasicMaterial({side: THREE.DoubleSide});
+      const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
       mat.color.set(color).multiplyScalar(intensity); // HDR: >1 colors become light sources
       const m = new THREE.Mesh(geo, mat);
       m.scale.set(w, h, 1);
@@ -254,8 +261,8 @@ export class App {
     const kick = new THREE.DirectionalLight(0xcaa6ff, 1.2);
     kick.position.set(4.5, 1.2, -3);
     this.backLights = [
-      {light: back, base: 2.4},
-      {light: kick, base: 1.2},
+      { light: back, base: 2.4 },
+      { light: kick, base: 1.2 },
     ];
 
     // Faint violet underglow: lifts the sphere's shadowed underside off the floor,
@@ -296,26 +303,19 @@ export class App {
     this.scene.add(hemi, key, key.target, back, kick, under, ground, backdrop);
   }
 
-  /** The canvas itself: a satin basalt sphere — a quiet stage that lets the crystals star.
-   *  Matte enough that the studio doesn't mirror across it, with just enough clearcoat
-   *  for a soft polished-stone sheen at grazing angles. */
-  private setupCanvasSphere(): void {
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: 0x1b1d24,
-      metalness: 0.05,
-      roughness: 0.52,
-      clearcoat: 0.35,
-      clearcoatRoughness: 0.3,
-      sheen: 0.15,
-      sheenColor: new THREE.Color(0x5a6bb0),
-      sheenRoughness: 0.7,
-      envMapIntensity: 0.55,
-    });
-    this.sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), mat);
-    this.sphere.castShadow = true;
-    this.sphere.receiveShadow = true;
+  /** The canvas itself: a jagged dark rock with Poly Haven PBR maps — quiet stage for crystals.
+   *  Displacement is baked into the mesh so paint raycasts match the visible surface. */
+  private async setupCanvasRock(): Promise<void> {
+    const textures = await loadRockTextures();
+    const geo = createRockGeometry(textures.displacementMap);
+    const mat = createRockMaterial(textures);
 
-    this.floatRoot.add(this.sphere, this.paintRoot);
+    this.rock = new THREE.Mesh(geo, mat);
+    this.rock.castShadow = true;
+    this.rock.receiveShadow = true;
+
+    const flecks = createGoldFlecks(geo);
+    this.floatRoot.add(this.rock, flecks, this.paintRoot);
     this.scene.add(this.floatRoot);
     indexForRaycasts(this.floatRoot);
   }
@@ -352,7 +352,7 @@ export class App {
 
   /** Post: MSAA scene pass + bloom + a gentle lens vignette, tone-mapped on output. */
   private setupPost(): void {
-    const scenePass = pass(this.scene, this.camera, {samples: 4});
+    const scenePass = pass(this.scene, this.camera, { samples: 4 });
     const color = scenePass.getTextureNode();
     this.bloomNode = bloom(
       color,
@@ -413,7 +413,7 @@ export class App {
    */
   scheduleRegrow(mode: "instant" | "animate"): void {
     if (this.regrowPending?.mode === "animate") return; // an animate request always wins
-    this.regrowPending = {mode};
+    this.regrowPending = { mode };
   }
 
   undoLast(): void {
@@ -470,7 +470,7 @@ export class App {
   /** Backlight slider: scales the rear rig — how hard light streams through the crystals. */
   setBacklight(v: number): void {
     this.settings.backlight = v;
-    for (const {light, base} of this.backLights) light.intensity = base * v;
+    for (const { light, base } of this.backLights) light.intensity = base * v;
   }
 
   setBloomStrength(v: number): void {
@@ -507,7 +507,7 @@ export class App {
   }
 
   private updateHud(): void {
-    const backend = (this.renderer.backend as {isWebGPUBackend?: boolean})
+    const backend = (this.renderer.backend as { isWebGPUBackend?: boolean })
       .isWebGPUBackend
       ? "WebGPU"
       : "WebGL2 (fallback)";
@@ -521,8 +521,8 @@ export class App {
     let mode: string;
     if (this.settings.drawMode) {
       mode = this.hovering
-        ? `<b>Drag now</b> to paint a ${noun} across the sphere — it grows when you let go.`
-        : `Move over the sphere, then <b>drag</b> to paint a ${noun}. Press <b>D</b> to orbit.`;
+        ? `<b>Drag now</b> to paint a ${noun} across the rock — it grows when you let go.`
+        : `Move over the rock, then <b>drag</b> to paint a ${noun}. Press <b>D</b> to orbit.`;
     } else {
       mode =
         "<b>Orbit mode</b> — drag to rotate, scroll to zoom, right-drag to pan. " +

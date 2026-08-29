@@ -1,15 +1,29 @@
-import * as THREE from 'three';
-import { MeshBasicNodeMaterial } from 'three/webgpu';
+import * as THREE from "three";
+import { MeshBasicNodeMaterial } from "three/webgpu";
 import {
-  abs, attribute, float, mix, positionLocal, smoothstep, step, time, uniform, vec3,
-} from 'three/tsl';
-import { mulberry32, type PaintMode, type StrokeInstance, type SurfaceSample } from './mode';
+  abs,
+  attribute,
+  float,
+  mix,
+  positionLocal,
+  smoothstep,
+  step,
+  time,
+  uniform,
+  vec3,
+} from "three/tsl";
+import {
+  mulberry32,
+  type PaintMode,
+  type StrokeInstance,
+  type SurfaceSample,
+} from "./mode";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // @types/three loses the node type of attribute() (returns AttributeNode<string>), which
 // breaks the fluent TSL API — wrap through float()/vec3() converts to restore typing.
-const attrFloat = (name: string) => float(attribute(name, 'float') as any);
-const attrVec3 = (name: string) => vec3(attribute(name, 'vec3') as any);
+const attrFloat = (name: string) => float(attribute(name, "float") as any);
+const attrVec3 = (name: string) => vec3(attribute(name, "vec3") as any);
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
@@ -34,16 +48,16 @@ const attrVec3 = (name: string) => vec3(attribute(name, 'vec3') as any);
  */
 
 export interface FissureSettings {
-  width: number;        // crack width (world units)
-  heat: number;         // core temperature/brightness multiplier
-  pulseSpeed: number;   // traveling heat-wave speed
+  width: number; // crack width (world units)
+  heat: number; // core temperature/brightness multiplier
+  pulseSpeed: number; // traveling heat-wave speed
   branchDensity: number; // side branches per world unit (live-culled up to MAX_BRANCHES)
-  branchLength: number;  // branch reach (world units, live-tapered up to MAX_BRANCH_LEN)
-  emberRate: number;    // embers per second per world unit of open crack
-  rockDensity: number;  // lip chunks per world unit (live-culled up to MAX_ROCKS)
-  rockSize: number;     // lip chunk size (world units)
-  lightSpill: number;   // flickering point-light intensity scale
-  growthSpeed: number;  // crack propagation speed (world units / second)
+  branchLength: number; // branch reach (world units, live-tapered up to MAX_BRANCH_LEN)
+  emberRate: number; // embers per second per world unit of open crack
+  rockDensity: number; // lip chunks per world unit (live-culled up to MAX_ROCKS)
+  rockSize: number; // lip chunk size (world units)
+  lightSpill: number; // flickering point-light intensity scale
+  growthSpeed: number; // crack propagation speed (world units / second)
 }
 
 export const defaultFissureSettings: FissureSettings = {
@@ -65,9 +79,9 @@ export const MAX_ROCKS = 30;
 export const MAX_BRANCHES = 8;
 export const MAX_BRANCH_LEN = 0.6;
 
-const PATH_STEP = 0.025;     // centerline resample step (world units)
-const ROCK_GROW = 0.35;      // stroke-distance window over which a lip chunk pops in
-const MAX_EMBERS = 320;      // particle pool per stroke
+const PATH_STEP = 0.025; // centerline resample step (world units)
+const ROCK_GROW = 0.35; // stroke-distance window over which a lip chunk pops in
+const MAX_EMBERS = 320; // particle pool per stroke
 const SPILL_LIGHTS = 3;
 
 // ---------- shared resources ----------
@@ -75,7 +89,7 @@ const SPILL_LIGHTS = 3;
 /** Flattened jagged basalt chunk, flat-shaded. Normalized to ~unit size, base at y=0. */
 function makeRockGeometry(rnd: () => number): THREE.BufferGeometry {
   const geo = new THREE.BoxGeometry(1, 0.55, 0.7, 2, 1, 1).toNonIndexed();
-  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const pos = geo.getAttribute("position") as THREE.BufferAttribute;
   // Jitter shared corners consistently: displace by a hash of the rounded position.
   const seen = new Map<string, [number, number, number]>();
   for (let i = 0; i < pos.count; i++) {
@@ -85,7 +99,12 @@ function makeRockGeometry(rnd: () => number): THREE.BufferGeometry {
       d = [(rnd() - 0.5) * 0.45, (rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.4];
       seen.set(key, d);
     }
-    pos.setXYZ(i, pos.getX(i) + d[0], pos.getY(i) * (0.7 + rnd() * 0.1) + d[1] * 0.5 + 0.25, pos.getZ(i) + d[2]);
+    pos.setXYZ(
+      i,
+      pos.getX(i) + d[0],
+      pos.getY(i) * (0.7 + rnd() * 0.1) + d[1] * 0.5 + 0.25,
+      pos.getZ(i) + d[2],
+    );
   }
   geo.computeVertexNormals();
   return geo;
@@ -97,7 +116,9 @@ let rockGeos: THREE.BufferGeometry[] | null = null;
 function getRockGeometries(): THREE.BufferGeometry[] {
   if (!rockGeos) {
     const rnd = mulberry32(0xba5a17);
-    rockGeos = Array.from({ length: ROCK_VARIANTS }, () => makeRockGeometry(rnd));
+    rockGeos = Array.from({ length: ROCK_VARIANTS }, () =>
+      makeRockGeometry(rnd),
+    );
   }
   return rockGeos;
 }
@@ -138,13 +159,13 @@ let emberTexture: THREE.CanvasTexture | null = null;
 function getEmberTexture(): THREE.CanvasTexture {
   if (!emberTexture) {
     const size = 64;
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext("2d")!;
     const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0, 'rgba(255,255,255,1)');
-    g.addColorStop(0.35, 'rgba(255,220,180,0.8)');
-    g.addColorStop(1, 'rgba(255,120,40,0)');
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.35, "rgba(255,220,180,0.8)");
+    g.addColorStop(1, "rgba(255,120,40,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
     emberTexture = new THREE.CanvasTexture(canvas);
@@ -155,13 +176,13 @@ function getEmberTexture(): THREE.CanvasTexture {
 // ---------- path + ribbon geometry ----------
 
 interface PathPoint {
-  pos: THREE.Vector3;    // on-surface centerline point (anchor space)
+  pos: THREE.Vector3; // on-surface centerline point (anchor space)
   normal: THREE.Vector3;
-  side: THREE.Vector3;   // tangent × normal — the ribbon's across direction
-  dist: number;          // distance along the stroke (branches: origin dist + walked)
-  walked: number;        // distance walked from the branch origin (0 on the main crack)
-  maxWalk: number;       // this branch's full generated length (1 on the main crack)
-  rank: number;          // branch culling rank (0 on the main crack → never culled)
+  side: THREE.Vector3; // tangent × normal — the ribbon's across direction
+  dist: number; // distance along the stroke (branches: origin dist + walked)
+  walked: number; // distance walked from the branch origin (0 on the main crack)
+  maxWalk: number; // this branch's full generated length (1 on the main crack)
+  rank: number; // branch culling rank (0 on the main crack → never culled)
 }
 
 /** Resample the painted samples into an even centerline with a stable tangent frame. */
@@ -181,7 +202,15 @@ function buildPath(samples: SurfaceSample[]): PathPoint[] {
     tangent.normalize();
     const normal = samples[i].localNormal.clone().normalize();
     const side = new THREE.Vector3().crossVectors(tangent, normal).normalize();
-    pts.push({ pos: samples[i].local.clone(), normal, side, dist: travelled, walked: 0, maxWalk: 1, rank: 0 });
+    pts.push({
+      pos: samples[i].local.clone(),
+      normal,
+      side,
+      dist: travelled,
+      walked: 0,
+      maxWalk: 1,
+      rank: 0,
+    });
   }
   return pts;
 }
@@ -213,10 +242,15 @@ function growBranches(main: PathPoint[], rnd: () => number): PathPoint[][] {
     const rank = rnd();
 
     // Launch direction: the main tangent swung 32°–72° to one side around the normal.
-    const tangent = new THREE.Vector3().crossVectors(origin.normal, origin.side);
-    const dir = tangent.clone().applyQuaternion(
-      q.setFromAxisAngle(origin.normal, sideSign * (0.55 + rnd() * 0.7)),
+    const tangent = new THREE.Vector3().crossVectors(
+      origin.normal,
+      origin.side,
     );
+    const dir = tangent
+      .clone()
+      .applyQuaternion(
+        q.setFromAxisAngle(origin.normal, sideSign * (0.55 + rnd() * 0.7)),
+      );
 
     const pts: PathPoint[] = [];
     const pos = origin.pos.clone();
@@ -279,9 +313,17 @@ function buildRibbonGeometry(
       // Branches: narrower than the main crack; their tip taper is dynamic (shader).
       let w = jit;
       if (isBranch) w *= 0.62;
-      else w *= Math.pow(THREE.MathUtils.clamp(Math.min(p.dist, total - p.dist) / 0.18, 0, 1), 0.65);
+      else
+        w *= Math.pow(
+          THREE.MathUtils.clamp(Math.min(p.dist, total - p.dist) / 0.18, 0, 1),
+          0.65,
+        );
       for (let k = 0; k < 2; k++) {
-        positions.push(p.pos.x + p.normal.x * 0.006, p.pos.y + p.normal.y * 0.006, p.pos.z + p.normal.z * 0.006);
+        positions.push(
+          p.pos.x + p.normal.x * 0.006,
+          p.pos.y + p.normal.y * 0.006,
+          p.pos.z + p.normal.z * 0.006,
+        );
         sides.push(p.side.x, p.side.y, p.side.z);
         across.push(k === 0 ? -1 : 1);
         dists.push(p.dist);
@@ -298,14 +340,14 @@ function buildRibbonGeometry(
   }
 
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('aSide', new THREE.Float32BufferAttribute(sides, 3));
-  geo.setAttribute('aAcross', new THREE.Float32BufferAttribute(across, 1));
-  geo.setAttribute('aDist', new THREE.Float32BufferAttribute(dists, 1));
-  geo.setAttribute('aJit', new THREE.Float32BufferAttribute(jitters, 1));
-  geo.setAttribute('aWalk', new THREE.Float32BufferAttribute(walks, 1));
-  geo.setAttribute('aMaxWalk', new THREE.Float32BufferAttribute(maxWalks, 1));
-  geo.setAttribute('aRank', new THREE.Float32BufferAttribute(ranks, 1));
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("aSide", new THREE.Float32BufferAttribute(sides, 3));
+  geo.setAttribute("aAcross", new THREE.Float32BufferAttribute(across, 1));
+  geo.setAttribute("aDist", new THREE.Float32BufferAttribute(dists, 1));
+  geo.setAttribute("aJit", new THREE.Float32BufferAttribute(jitters, 1));
+  geo.setAttribute("aWalk", new THREE.Float32BufferAttribute(walks, 1));
+  geo.setAttribute("aMaxWalk", new THREE.Float32BufferAttribute(maxWalks, 1));
+  geo.setAttribute("aRank", new THREE.Float32BufferAttribute(ranks, 1));
   geo.setIndex(indices);
   return geo;
 }
@@ -316,15 +358,15 @@ interface RockInstance {
   variant: number;
   anchor: THREE.Vector3;
   n: THREE.Vector3;
-  side: THREE.Vector3;  // signed: which lip of the crack it sits on
+  side: THREE.Vector3; // signed: which lip of the crack it sits on
   tangent: THREE.Vector3;
   birth: number;
-  cullRnd: number;      // density culling rank
-  offRnd: number;       // how far outside the crack edge
+  cullRnd: number; // density culling rank
+  offRnd: number; // how far outside the crack edge
   yaw: number;
   sizeRnd: number;
-  flatRnd: number;      // height squash
-  tint: number;         // 0..1 charcoal variation
+  flatRnd: number; // height squash
+  tint: number; // 0..1 charcoal variation
   visible: boolean;
   pos: THREE.Vector3;
   quat: THREE.Quaternion;
@@ -364,8 +406,8 @@ class FissureStroke implements StrokeInstance {
   readonly group = new THREE.Group();
 
   private settings: FissureSettings;
-  private path: PathPoint[];       // main crack only (lights, rocks)
-  private allPts: PathPoint[];     // main + branches (ember spawning)
+  private path: PathPoint[]; // main crack only (lights, rocks)
+  private allPts: PathPoint[]; // main + branches (ember spawning)
   private readonly total: number;
   private grown = 0;
   private rocksDone = false;
@@ -377,8 +419,8 @@ class FissureStroke implements StrokeInstance {
   private uHeat = uniform(1);
   private uPulse = uniform(1);
   private uBranchFrac = uniform(0.5); // branchDensity / MAX_BRANCHES
-  private uLenFrac = uniform(0.4);    // branchLength / MAX_BRANCH_LEN
-  private uTotal = uniform(1);        // main crack length, for the tip light fade
+  private uLenFrac = uniform(0.4); // branchLength / MAX_BRANCH_LEN
+  private uTotal = uniform(1); // main crack length, for the tip light fade
 
   private ribbonGeo!: THREE.BufferGeometry;
   private coreMat!: MeshBasicNodeMaterial;
@@ -390,9 +432,14 @@ class FissureStroke implements StrokeInstance {
   private emberMesh: THREE.InstancedMesh;
   private emberSpawnDebt = 0;
 
-  private lights: { light: THREE.PointLight; dist: number; phase: number }[] = [];
+  private lights: { light: THREE.PointLight; dist: number; phase: number }[] =
+    [];
 
-  constructor(samples: SurfaceSample[], seed: number, settings: FissureSettings) {
+  constructor(
+    samples: SurfaceSample[],
+    seed: number,
+    settings: FissureSettings,
+  ) {
     this.settings = { ...settings };
     const rnd = mulberry32(seed);
     this.path = buildPath(samples);
@@ -402,7 +449,11 @@ class FissureStroke implements StrokeInstance {
     this.allPts = [...this.path, ...branches.flat()];
 
     // ----- ribbons (one geometry: main + branches, two node materials) -----
-    this.ribbonGeo = buildRibbonGeometry([this.path, ...branches], this.total, rnd);
+    this.ribbonGeo = buildRibbonGeometry(
+      [this.path, ...branches],
+      this.total,
+      rnd,
+    );
 
     this.coreMat = new MeshBasicNodeMaterial();
     this.coreMat.transparent = true;
@@ -433,13 +484,21 @@ class FissureStroke implements StrokeInstance {
     const rockMat = getRockMaterial();
     for (let v = 0; v < ROCK_VARIANTS; v++) {
       const list = this.rocksByVariant[v];
-      const mesh = new THREE.InstancedMesh(geos[v], rockMat, Math.max(list.length, 1));
+      const mesh = new THREE.InstancedMesh(
+        geos[v],
+        rockMat,
+        Math.max(list.length, 1),
+      );
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.frustumCulled = false;
       for (let i = 0; i < list.length; i++) {
         mesh.setMatrixAt(i, _zero);
-        _color.setHSL(0.06 + list[i].tint * 0.02, 0.08, 0.045 + list[i].tint * 0.03);
+        _color.setHSL(
+          0.06 + list[i].tint * 0.02,
+          0.08,
+          0.045 + list[i].tint * 0.03,
+        );
         mesh.setColorAt(i, _color);
       }
       mesh.count = list.length;
@@ -464,7 +523,11 @@ class FissureStroke implements StrokeInstance {
         heat: 0,
       });
     }
-    this.emberMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), getEmberMaterial(), MAX_EMBERS);
+    this.emberMesh = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1),
+      getEmberMaterial(),
+      MAX_EMBERS,
+    );
     for (let i = 0; i < MAX_EMBERS; i++) {
       this.emberMesh.setMatrixAt(i, _zero);
       this.emberMesh.setColorAt(i, _color.setRGB(0, 0, 0));
@@ -474,7 +537,10 @@ class FissureStroke implements StrokeInstance {
     this.group.add(this.emberMesh);
 
     // ----- light spill -----
-    const nLights = Math.min(SPILL_LIGHTS, Math.max(1, Math.round(this.total * 1.2)));
+    const nLights = Math.min(
+      SPILL_LIGHTS,
+      Math.max(1, Math.round(this.total * 1.2)),
+    );
     for (let i = 0; i < nLights; i++) {
       const f = nLights === 1 ? 0.5 : 0.12 + (0.76 * i) / (nLights - 1);
       const p = this.pathAt(this.total * f);
@@ -498,10 +564,10 @@ class FissureStroke implements StrokeInstance {
    */
   // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- inferred TSL node types
   private branchFactors() {
-    const aWalk = attrFloat('aWalk');
-    const aMaxWalk = attrFloat('aMaxWalk');
-    const aRank = attrFloat('aRank');
-    const aDist = attrFloat('aDist');
+    const aWalk = attrFloat("aWalk");
+    const aMaxWalk = attrFloat("aMaxWalk");
+    const aRank = attrFloat("aRank");
+    const aDist = attrFloat("aDist");
     const sel = step(aRank, this.uBranchFrac);
     const taper = float(1)
       .sub(aWalk.div(aMaxWalk.mul(this.uLenFrac).add(1e-4)))
@@ -518,24 +584,37 @@ class FissureStroke implements StrokeInstance {
 
   /** Blackbody-ish core: dark seam → deep red → orange → white-hot, pulsing along its length. */
   private buildCoreNodes(mat: MeshBasicNodeMaterial): void {
-    const aAcross = attrFloat('aAcross');
-    const aDist = attrFloat('aDist');
-    const aJit = attrFloat('aJit');
-    const aSide = attrVec3('aSide');
+    const aAcross = attrFloat("aAcross");
+    const aDist = attrFloat("aDist");
+    const aJit = attrFloat("aJit");
+    const aSide = attrVec3("aSide");
     const { sel, taper, tip } = this.branchFactors();
 
     mat.positionNode = positionLocal.add(
-      aSide.mul(this.uWidth.mul(0.5).mul(aAcross).mul(aJit)).mul(taper.mul(sel)),
+      aSide
+        .mul(this.uWidth.mul(0.5).mul(aAcross).mul(aJit))
+        .mul(taper.mul(sel)),
     );
 
     const openness = smoothstep(0.0, 0.1, this.uGrown.sub(aDist));
     const center = smoothstep(0.12, 1.0, abs(aAcross)).oneMinus();
-    const pulse = aDist.mul(7).sub(time.mul(this.uPulse.mul(2.6))).sin().mul(0.28).add(0.72);
+    const pulse = aDist
+      .mul(7)
+      .sub(time.mul(this.uPulse.mul(2.6)))
+      .sin()
+      .mul(0.28)
+      .add(0.72);
     const flicker = time.mul(9).add(aDist.mul(41)).sin().mul(0.08).add(0.94);
     // White flash at the racing crack front (also dimmed into the tips).
-    const flash = smoothstep(0.0, 0.22, abs(this.uGrown.sub(aDist))).oneMinus().mul(1.6).mul(tip);
+    const flash = smoothstep(0.0, 0.22, abs(this.uGrown.sub(aDist)))
+      .oneMinus()
+      .mul(1.6)
+      .mul(tip);
     // Branches run cooler toward their tips; the main crack's light dies into its points.
-    const heat = center.mul(pulse).mul(flicker).mul(this.uHeat)
+    const heat = center
+      .mul(pulse)
+      .mul(flicker)
+      .mul(this.uHeat)
       .mul(taper.mul(0.35).add(0.65))
       .mul(tip.mul(0.85).add(0.15))
       .add(flash);
@@ -555,22 +634,34 @@ class FissureStroke implements StrokeInstance {
 
   /** The wide additive halo that paints radiant orange onto the surrounding surface. */
   private buildUnderglowNodes(mat: MeshBasicNodeMaterial): void {
-    const aAcross = attrFloat('aAcross');
-    const aDist = attrFloat('aDist');
-    const aJit = attrFloat('aJit');
-    const aSide = attrVec3('aSide');
+    const aAcross = attrFloat("aAcross");
+    const aDist = attrFloat("aDist");
+    const aJit = attrFloat("aJit");
+    const aSide = attrVec3("aSide");
     const { sel, taper, tip } = this.branchFactors();
 
     mat.positionNode = positionLocal.add(
-      aSide.mul(this.uGlowWidth.mul(0.5).mul(aAcross).mul(aJit)).mul(taper.mul(sel)),
+      aSide
+        .mul(this.uGlowWidth.mul(0.5).mul(aAcross).mul(aJit))
+        .mul(taper.mul(sel)),
     );
 
     const openness = smoothstep(0.0, 0.18, this.uGrown.sub(aDist));
     const falloff = abs(aAcross).oneMinus().max(0).pow(1.6);
-    const pulse = aDist.mul(7).sub(time.mul(this.uPulse.mul(2.6))).sin().mul(0.22).add(0.78);
+    const pulse = aDist
+      .mul(7)
+      .sub(time.mul(this.uPulse.mul(2.6)))
+      .sin()
+      .mul(0.22)
+      .add(0.78);
     // The halo fades out entirely at the tips — a glow blob past the point would read as
     // a rounded end and undo the spike.
-    const strength = falloff.mul(pulse).mul(this.uHeat).mul(taper.mul(0.5).add(0.5)).mul(tip).mul(0.34);
+    const strength = falloff
+      .mul(pulse)
+      .mul(this.uHeat)
+      .mul(taper.mul(0.5).add(0.5))
+      .mul(tip)
+      .mul(0.34);
     mat.colorNode = vec3(1.5, 0.38, 0.05).mul(strength);
     mat.opacityNode = openness.mul(sel);
   }
@@ -627,11 +718,19 @@ class FissureStroke implements StrokeInstance {
         r.scale.set(size, size * r.flatRnd, size * 0.8);
         // Sit just outside the crack edge, sunk well into the surface so only the top
         // ridge of each chunk breaks through — broken crust, not scattered pebbles.
-        r.pos.copy(r.anchor)
-          .addScaledVector(r.side, s.width * 0.55 + r.offRnd * s.width * 0.6 + size * 0.15)
+        r.pos
+          .copy(r.anchor)
+          .addScaledVector(
+            r.side,
+            s.width * 0.55 + r.offRnd * s.width * 0.6 + size * 0.15,
+          )
           .addScaledVector(r.n, -0.3 * size * r.flatRnd);
         // Long axis along the crack, random yaw, slight outward roll.
-        _basis.makeBasis(r.tangent, r.n, new THREE.Vector3().crossVectors(r.tangent, r.n));
+        _basis.makeBasis(
+          r.tangent,
+          r.n,
+          new THREE.Vector3().crossVectors(r.tangent, r.n),
+        );
         r.quat.setFromRotationMatrix(_basis);
         _q.setFromAxisAngle(r.n, r.yaw);
         r.quat.premultiply(_q);
@@ -696,7 +795,11 @@ class FissureStroke implements StrokeInstance {
   // ----- embers -----
 
   private pathAt(dist: number): PathPoint {
-    const i = THREE.MathUtils.clamp(Math.round(dist / PATH_STEP), 0, this.path.length - 1);
+    const i = THREE.MathUtils.clamp(
+      Math.round(dist / PATH_STEP),
+      0,
+      this.path.length - 1,
+    );
     return this.path[i];
   }
 
@@ -715,14 +818,27 @@ class FissureStroke implements StrokeInstance {
           p.dist > this.grown ||
           p.rank > this.settings.branchDensity / MAX_BRANCHES ||
           p.walked > p.maxWalk * (this.settings.branchLength / MAX_BRANCH_LEN)
-        ) continue;
+        )
+          continue;
         e.alive = true;
-        e.pos.copy(p.pos)
-          .addScaledVector(p.side, (Math.random() - 0.5) * this.settings.width * 0.7)
+        e.pos
+          .copy(p.pos)
+          .addScaledVector(
+            p.side,
+            (Math.random() - 0.5) * this.settings.width * 0.7,
+          )
           .addScaledVector(p.normal, 0.01);
-        e.vel.copy(p.normal).multiplyScalar(0.16 + Math.random() * 0.2)
+        e.vel
+          .copy(p.normal)
+          .multiplyScalar(0.16 + Math.random() * 0.2)
           .addScaledVector(p.side, (Math.random() - 0.5) * 0.1);
-        e.quat.setFromEuler(new THREE.Euler(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI));
+        e.quat.setFromEuler(
+          new THREE.Euler(
+            Math.random() * Math.PI,
+            Math.random() * Math.PI,
+            Math.random() * Math.PI,
+          ),
+        );
         e.size = 0.016 + Math.random() * 0.02;
         e.maxLife = 0.8 + Math.random() * 1.4;
         e.life = e.maxLife;
@@ -745,15 +861,19 @@ class FissureStroke implements StrokeInstance {
       e.pos.x += Math.sin(e.life * 7 + i) * dt * 0.02;
       e.pos.z += Math.cos(e.life * 6 + i * 1.7) * dt * 0.02;
 
-      const f = e.life / e.maxLife;                       // 1 → 0
+      const f = e.life / e.maxLife; // 1 → 0
       _s.setScalar(e.size * (0.5 + f * 0.5));
       _m.compose(e.pos, e.quat, _s);
       this.emberMesh.setMatrixAt(i, _m);
-      const b = f * f * (0.9 + e.heat * 0.7);             // brightness decay
-      this.emberMesh.setColorAt(i, _color.setRGB(b * 1.5, b * (0.4 + e.heat * 0.5), b * 0.14));
+      const b = f * f * (0.9 + e.heat * 0.7); // brightness decay
+      this.emberMesh.setColorAt(
+        i,
+        _color.setRGB(b * 1.5, b * (0.4 + e.heat * 0.5), b * 0.14),
+      );
     }
     this.emberMesh.instanceMatrix.needsUpdate = true;
-    if (this.emberMesh.instanceColor) this.emberMesh.instanceColor.needsUpdate = true;
+    if (this.emberMesh.instanceColor)
+      this.emberMesh.instanceColor.needsUpdate = true;
   }
 
   private updateLights(t: number): void {
@@ -763,7 +883,10 @@ class FissureStroke implements StrokeInstance {
         continue;
       }
       const ignite = THREE.MathUtils.clamp((this.grown - dist) / 0.4, 0, 1);
-      const flicker = 0.78 + 0.16 * Math.sin(t * 13 + phase) + 0.06 * Math.sin(t * 31 + phase * 2.3);
+      const flicker =
+        0.78 +
+        0.16 * Math.sin(t * 13 + phase) +
+        0.06 * Math.sin(t * 31 + phase * 2.3);
       light.intensity = this.settings.lightSpill * 1.6 * ignite * flicker;
     }
   }
@@ -784,7 +907,7 @@ class FissureStroke implements StrokeInstance {
 // ---------- the mode ----------
 
 export const fissureMode: PaintMode<FissureSettings> = {
-  id: 'Molten fissures',
+  id: "Molten fissures",
   createStroke(samples, seed, settings): StrokeInstance {
     return new FissureStroke(samples, seed, settings);
   },
