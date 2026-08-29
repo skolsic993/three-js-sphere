@@ -118,7 +118,7 @@ export class App {
   private controls!: OrbitControls;
   private painter!: SurfacePainter;
 
-  /** The floating canvas: rock + everything painted on it bob and turn together. */
+  /** The floating canvas: main rock + companions + paint — tilts together with the mouse. */
   private floatRoot = new THREE.Group();
   private rock!: THREE.Mesh;
   private paintRoot = new THREE.Group(); // strokes parent here (child of floatRoot)
@@ -131,6 +131,9 @@ export class App {
   private sceneryStrokes: StrokeInstance[] = [];
   /** The backlight/kicker pair, scaled together by the Backlight slider. */
   private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
+
+  /** Mouse-driven tilt: target from pointer position, smoothed onto floatRoot each frame. */
+  private tiltTarget = new THREE.Vector2(0, 0);
 
   private hud = document.getElementById("hud")!;
   private lastTime = 0;
@@ -161,7 +164,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 1;
+    this.controls.minDistance = 13;
     this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -200,11 +203,22 @@ export class App {
       if (e.key.toLowerCase() === "d") this.toggleMode();
     });
 
+    window.addEventListener("pointermove", this.onPointerMove);
     window.addEventListener("resize", this.onResize);
     this.onResize();
 
     renderer.setAnimationLoop((t) => this.tick(t));
   }
+
+  /** Map pointer to a gentle tilt target — rocks follow the mouse; idle when it stops. */
+  private onPointerMove = (e: PointerEvent): void => {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+    // Horizontal mouse → yaw; vertical → pitch — kept small so the set barely leans.
+    this.tiltTarget.set(ny * 0.06, nx * 0.01);
+  };
 
   // ---------- environment: a sunny outdoor sky captured into a PMREM env map ----------
 
@@ -311,12 +325,12 @@ export class App {
    */
   private addCompanionRocks(textures: RockTextures): void {
     const companions: CompanionSpec[] = [
-      // Beneath — medium chunks, spaced well clear of the main mass.
+      // Beneath — under the main mass, with a little breathing room.
       {
         seed: 11.3,
         scale: 0.72,
         detail: 5,
-        position: [-2.1, -1.55, 0.85],
+        position: [-1.55, -1.5, 0.7],
         rotation: [0.35, 1.1, -0.2],
         crystalClusters: 2,
         flecks: 3,
@@ -325,7 +339,7 @@ export class App {
         seed: 22.7,
         scale: 0.52,
         detail: 4,
-        position: [2.0, -1.7, -1.1],
+        position: [1.45, -1.6, -0.85],
         rotation: [-0.4, 0.6, 0.5],
         crystalClusters: 2,
         flecks: 2,
@@ -334,7 +348,7 @@ export class App {
         seed: 33.1,
         scale: 0.38,
         detail: 4,
-        position: [0.35, -1.9, 1.85],
+        position: [0.25, -1.8, 1.4],
         rotation: [0.6, -0.8, 0.15],
         crystalClusters: 1,
         flecks: 2,
@@ -343,7 +357,7 @@ export class App {
         seed: 88.2,
         scale: 0.45,
         detail: 4,
-        position: [-1.7, -1.85, -1.6],
+        position: [-1.25, -1.75, -1.2],
         rotation: [0.25, -0.5, 0.8],
         crystalClusters: 1,
         flecks: 2,
@@ -352,17 +366,17 @@ export class App {
         seed: 91.6,
         scale: 0.3,
         detail: 4,
-        position: [1.6, -2.0, 1.4],
+        position: [1.2, -1.85, 1.05],
         rotation: [-0.7, 1.0, -0.3],
         crystalClusters: 1,
         flecks: 1,
       },
-      // Around — tiny satellites further out from the silhouette.
+      // Around — small satellites near the silhouette.
       {
         seed: 44.9,
         scale: 0.2,
         detail: 3,
-        position: [-3.2, 0.2, 1.7],
+        position: [-2.15, 0.15, 1.25],
         rotation: [0.9, 0.3, -0.5],
         crystalClusters: 1,
         flecks: 1,
@@ -371,7 +385,7 @@ export class App {
         seed: 55.2,
         scale: 0.16,
         detail: 3,
-        position: [3.1, -0.35, 2.0],
+        position: [2.1, -0.25, 1.4],
         rotation: [-0.5, 1.4, 0.7],
         crystalClusters: 1,
         flecks: 1,
@@ -380,7 +394,7 @@ export class App {
         seed: 66.8,
         scale: 0.14,
         detail: 3,
-        position: [-2.6, 0.65, -2.7],
+        position: [-1.85, 0.55, -1.9],
         rotation: [0.2, -1.2, 0.9],
         crystalClusters: 1,
         flecks: 1,
@@ -389,7 +403,7 @@ export class App {
         seed: 77.4,
         scale: 0.12,
         detail: 3,
-        position: [2.9, 0.4, -2.2],
+        position: [2.0, 0.35, -1.55],
         rotation: [1.1, 0.5, -0.3],
         crystalClusters: 1,
         flecks: 0,
@@ -398,7 +412,7 @@ export class App {
         seed: 102.1,
         scale: 0.18,
         detail: 3,
-        position: [-3.4, -0.5, -0.6],
+        position: [-2.3, -0.4, -0.45],
         rotation: [0.4, 1.8, 0.2],
         crystalClusters: 1,
         flecks: 1,
@@ -407,7 +421,7 @@ export class App {
         seed: 113.5,
         scale: 0.15,
         detail: 3,
-        position: [3.3, 0.55, 0.4],
+        position: [2.25, 0.45, 0.3],
         rotation: [-0.8, 0.2, 1.1],
         crystalClusters: 1,
         flecks: 1,
@@ -416,7 +430,7 @@ export class App {
         seed: 124.8,
         scale: 0.13,
         detail: 3,
-        position: [0.9, -0.7, -3.3],
+        position: [0.65, -0.55, -2.2],
         rotation: [0.6, -0.9, -0.4],
         crystalClusters: 1,
         flecks: 0,
@@ -425,7 +439,7 @@ export class App {
         seed: 135.3,
         scale: 0.11,
         detail: 3,
-        position: [-0.8, 0.9, 3.1],
+        position: [-0.55, 0.7, 2.1],
         rotation: [1.3, 0.7, 0.15],
         crystalClusters: 1,
         flecks: 0,
@@ -434,7 +448,7 @@ export class App {
         seed: 146.7,
         scale: 0.17,
         detail: 3,
-        position: [2.2, -1.1, 2.8],
+        position: [1.55, -0.85, 1.9],
         rotation: [-0.3, 1.5, 0.6],
         crystalClusters: 1,
         flecks: 1,
@@ -443,17 +457,17 @@ export class App {
         seed: 157.9,
         scale: 0.1,
         detail: 3,
-        position: [-2.8, -0.9, 2.4],
+        position: [-1.9, -0.7, 1.65],
         rotation: [0.85, -0.4, 1.2],
         crystalClusters: 1,
         flecks: 0,
       },
-      // Above — larger chunks floating over the main mass.
+      // Above — larger chunks over the main mass.
       {
         seed: 201.4,
         scale: 0.58,
         detail: 5,
-        position: [-1.4, 2.15, 0.6],
+        position: [-1.05, 1.7, 0.5],
         rotation: [0.45, -0.9, 0.35],
         crystalClusters: 2,
         flecks: 3,
@@ -462,7 +476,7 @@ export class App {
         seed: 212.8,
         scale: 0.48,
         detail: 4,
-        position: [1.55, 2.0, -0.85],
+        position: [1.15, 1.6, -0.65],
         rotation: [-0.55, 1.2, -0.25],
         crystalClusters: 2,
         flecks: 2,
@@ -471,7 +485,7 @@ export class App {
         seed: 223.1,
         scale: 0.36,
         detail: 4,
-        position: [0.2, 2.55, 1.35],
+        position: [0.15, 1.95, 1.0],
         rotation: [0.7, 0.4, -0.85],
         crystalClusters: 1,
         flecks: 2,
@@ -480,17 +494,17 @@ export class App {
         seed: 234.6,
         scale: 0.42,
         detail: 4,
-        position: [-0.9, 1.85, -1.7],
+        position: [-0.7, 1.5, -1.25],
         rotation: [-0.3, 1.6, 0.55],
         crystalClusters: 1,
         flecks: 2,
       },
-      // Above — smaller satellites around the upper silhouette.
+      // Above — smaller satellites near the upper silhouette.
       {
         seed: 245.2,
         scale: 0.18,
         detail: 3,
-        position: [2.4, 1.7, 1.1],
+        position: [1.65, 1.35, 0.85],
         rotation: [1.0, -0.6, 0.4],
         crystalClusters: 1,
         flecks: 1,
@@ -499,7 +513,7 @@ export class App {
         seed: 256.7,
         scale: 0.14,
         detail: 3,
-        position: [-2.5, 1.95, -0.9],
+        position: [-1.7, 1.55, -0.7],
         rotation: [-0.7, 0.85, 1.1],
         crystalClusters: 1,
         flecks: 1,
@@ -508,7 +522,7 @@ export class App {
         seed: 267.3,
         scale: 0.11,
         detail: 3,
-        position: [1.1, 2.85, -0.3],
+        position: [0.8, 2.15, -0.25],
         rotation: [0.5, 1.4, -0.7],
         crystalClusters: 1,
         flecks: 0,
@@ -517,7 +531,7 @@ export class App {
         seed: 278.9,
         scale: 0.16,
         detail: 3,
-        position: [-1.8, 2.4, 1.6],
+        position: [-1.25, 1.8, 1.15],
         rotation: [1.2, 0.2, -0.45],
         crystalClusters: 1,
         flecks: 1,
@@ -526,7 +540,7 @@ export class App {
         seed: 289.5,
         scale: 0.09,
         detail: 3,
-        position: [0.55, 3.05, 0.9],
+        position: [0.4, 2.25, 0.7],
         rotation: [-1.0, 0.7, 0.9],
         crystalClusters: 1,
         flecks: 0,
@@ -535,7 +549,7 @@ export class App {
         seed: 301.2,
         scale: 0.13,
         detail: 3,
-        position: [2.0, 2.25, -1.8],
+        position: [1.4, 1.7, -1.25],
         rotation: [0.35, -1.3, 0.6],
         crystalClusters: 1,
         flecks: 0,
@@ -544,7 +558,7 @@ export class App {
         seed: 312.8,
         scale: 0.08,
         detail: 3,
-        position: [-0.4, 2.7, -2.0],
+        position: [-0.3, 2.0, -1.4],
         rotation: [0.9, 1.1, -0.2],
         crystalClusters: 0,
         flecks: 0,
@@ -836,6 +850,20 @@ export class App {
     this.painter.update(dt);
     for (const s of this.live) s.update(dt, tSec);
     for (const s of this.sceneryStrokes) s.update(dt, tSec);
+
+    // All rocks share floatRoot — ease toward the mouse tilt (no idle spin).
+    this.floatRoot.rotation.x = THREE.MathUtils.damp(
+      this.floatRoot.rotation.x,
+      this.tiltTarget.x,
+      5,
+      dt,
+    );
+    this.floatRoot.rotation.y = THREE.MathUtils.damp(
+      this.floatRoot.rotation.y,
+      this.tiltTarget.y,
+      5,
+      dt,
+    );
 
     this.post.render();
   }
