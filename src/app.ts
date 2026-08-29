@@ -192,7 +192,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 1;
+    this.controls.minDistance = 13;
     this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
