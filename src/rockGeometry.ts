@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { compositeRockAlbedoWithGold, loadGoldStrip } from "./goldMaps";
 
 /**
  * Procedural charcoal ore chunk — organic, crumbly, matte.
@@ -9,32 +10,48 @@ export interface RockTextures {
   map: THREE.Texture;
   normalMap: THREE.Texture;
   roughnessMap: THREE.Texture;
+  metalnessMap: THREE.Texture;
   displacementMap: THREE.Texture;
 }
 
 const TEX_BASE = "/textures";
+/** Keep in sync with UV sampling in createRockGeometry. */
+const TEX_REPEAT = 1.05;
 
 export async function loadRockTextures(): Promise<RockTextures> {
   const loader = new THREE.TextureLoader();
-  const [map, normalMap, roughnessMap, displacementMap] = await Promise.all([
+  const [rawMap, normalMap, displacementMap, goldStrip] = await Promise.all([
     loader.loadAsync(`${TEX_BASE}/dark_rock_diff_2k.png`),
     loader.loadAsync(`${TEX_BASE}/dark_rock_nor_gl_2k.jpg`),
-    loader.loadAsync(`${TEX_BASE}/dark_rock_rough_2k.jpg`),
     loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
+    loadGoldStrip(),
   ]);
 
-  map.colorSpace = THREE.SRGBColorSpace;
-  for (const tex of [normalMap, roughnessMap, displacementMap]) {
+  const { map, metalnessMap, roughnessMap } = compositeRockAlbedoWithGold(
+    rawMap,
+    goldStrip,
+  );
+
+  for (const tex of [normalMap, displacementMap]) {
     tex.colorSpace = THREE.NoColorSpace;
   }
-  for (const tex of [map, normalMap, roughnessMap, displacementMap]) {
+  for (const tex of [
+    map,
+    normalMap,
+    roughnessMap,
+    metalnessMap,
+    displacementMap,
+  ]) {
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
-    tex.anisotropy = 8;
-    tex.repeat.set(1.6, 1.6);
+    tex.anisotropy = 16;
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.repeat.set(TEX_REPEAT, TEX_REPEAT);
   }
 
-  return { map, normalMap, roughnessMap, displacementMap };
+  return { map, normalMap, roughnessMap, metalnessMap, displacementMap };
 }
 
 /** Hash → [0, 1) for stable per-vertex procedural noise. */
@@ -271,8 +288,8 @@ export function createRockGeometry(
     }
 
     // Bake Poly Haven displacement as real surface relief (UVs match texture.repeat).
-    const u = uv.getX(i) * 1.6;
-    const v = uv.getY(i) * 1.6;
+    const u = uv.getX(i) * TEX_REPEAT;
+    const v = uv.getY(i) * TEX_REPEAT;
     const h = sampleDisplacement(data, width, height, u, v);
     const outward = p.length() || 1;
     const relief =
@@ -314,12 +331,13 @@ export function createRockMaterial(
     color: 0xffffff,
     map: textures.map,
     normalMap: textures.normalMap,
-    normalScale: new THREE.Vector2(1.7, 1.7),
+    normalScale: new THREE.Vector2(1.35, 1.35),
     roughnessMap: textures.roughnessMap,
     roughness: 1,
-    metalness: 0,
+    metalnessMap: textures.metalnessMap,
+    metalness: 1, // scratched-gold flecks from metalnessMap catch studio lights
     clearcoat: 0,
-    envMapIntensity: 0.12,
-    specularIntensity: 0.15,
+    envMapIntensity: 0.85,
+    specularIntensity: 0.45,
   });
 }

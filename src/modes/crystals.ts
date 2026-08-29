@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { buildCrystalGoldMaps, loadGoldStrip } from "../goldMaps";
 import {
   mulberry32,
   type PaintMode,
@@ -44,12 +45,12 @@ export interface CrystalSettings {
 export const defaultCrystalSettings: CrystalSettings = {
   palette: "Citrine",
   clusterDensity: 16,
-  crystalSize: 0.112,
-  shards: 16,
+  crystalSize: 0.158,
+  shards: 8,
   spread: 2.5,
-  tilt: 0.545,
+  tilt: 1,
   sizeJitter: 1,
-  clearMix: 0.312,
+  clearMix: 0,
   glow: 0,
   growthSpeed: 1.4,
 };
@@ -190,72 +191,13 @@ function getVariantGeometries(): THREE.BufferGeometry[] {
 
 const materials = new Map<CrystalPaletteName, THREE.MeshStandardMaterial>();
 
-/** Crop one vertical strip from the 6-panel gold collage into albedo + roughness maps. */
+/** Same scratched-gold leaf strip as rock ore flecks — solid metal for Citrine facets. */
 async function loadGoldMaps(): Promise<{
   map: THREE.Texture;
   roughnessMap: THREE.Texture;
 }> {
-  const full = await new THREE.TextureLoader().loadAsync(
-    "/textures/gold_textures_for_you__by_hibbary_dea5nys-fullview.jpg",
-  );
-  const img = full.image as HTMLImageElement | ImageBitmap;
-  // Strip 3 (0-based) = bright yellow gold in the collage.
-  const stripIndex = 3;
-  const stripW = Math.floor(img.width / 6);
-  const stripH = img.height;
-
-  const albedo = document.createElement("canvas");
-  albedo.width = stripW;
-  albedo.height = stripH;
-  const aCtx = albedo.getContext("2d", { willReadFrequently: true });
-  if (!aCtx) throw new Error("Could not crop gold albedo");
-  aCtx.drawImage(
-    img,
-    stripIndex * stripW,
-    0,
-    stripW,
-    stripH,
-    0,
-    0,
-    stripW,
-    stripH,
-  );
-
-  // Roughness from luminance: bright scratches → slightly rougher, dark foil → smoother.
-  const { data } = aCtx.getImageData(0, 0, stripW, stripH);
-  const roughData = new Uint8ClampedArray(data.length);
-  for (let i = 0; i < data.length; i += 4) {
-    const lum =
-      (data[i]! * 0.299 + data[i + 1]! * 0.587 + data[i + 2]! * 0.114) / 255;
-    const r = Math.round(THREE.MathUtils.clamp(0.22 + lum * 0.55, 0, 1) * 255);
-    roughData[i] = r;
-    roughData[i + 1] = r;
-    roughData[i + 2] = r;
-    roughData[i + 3] = 255;
-  }
-  const roughCanvas = document.createElement("canvas");
-  roughCanvas.width = stripW;
-  roughCanvas.height = stripH;
-  const rCtx = roughCanvas.getContext("2d");
-  if (!rCtx) throw new Error("Could not build gold roughness map");
-  rCtx.putImageData(new ImageData(roughData, stripW, stripH), 0, 0);
-
-  const map = new THREE.CanvasTexture(albedo);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.wrapS = THREE.RepeatWrapping;
-  map.wrapT = THREE.RepeatWrapping;
-  map.repeat.set(1.6, 1.6);
-  map.anisotropy = 8;
-
-  const roughnessMap = new THREE.CanvasTexture(roughCanvas);
-  roughnessMap.colorSpace = THREE.NoColorSpace;
-  roughnessMap.wrapS = THREE.RepeatWrapping;
-  roughnessMap.wrapT = THREE.RepeatWrapping;
-  roughnessMap.repeat.copy(map.repeat);
-  roughnessMap.anisotropy = 8;
-
-  full.dispose();
-  return { map, roughnessMap };
+  const strip = await loadGoldStrip();
+  return buildCrystalGoldMaps(strip);
 }
 
 let goldMapsPromise: Promise<{
@@ -263,19 +205,18 @@ let goldMapsPromise: Promise<{
   roughnessMap: THREE.Texture;
 }> | null = null;
 
-/** Load scratched gold maps and attach them to the Citrine (metallic) material. */
+/** Attach scratched-gold leaf maps to the Citrine (metallic) material. */
 export async function prepareCrystalGoldMaps(): Promise<void> {
   if (!goldMapsPromise) goldMapsPromise = loadGoldMaps();
   const { map, roughnessMap } = await goldMapsPromise;
   const mat = getMaterial("Citrine", 0);
   mat.map = map;
   mat.roughnessMap = roughnessMap;
-  // Let the texture drive color; keep a slight warm tint so instance colors still work.
-  mat.color.set(0xfff0d0);
-  mat.roughness = 0.22;
+  // Texture carries the gold; keep tint near-white so instance colors stay subtle.
+  mat.color.set(0xffffff);
+  mat.roughness = 0.28;
   mat.metalness = 1;
-  // Dark studio needs a strong local boost so gold actually glints.
-  mat.envMapIntensity = 3.4;
+  mat.envMapIntensity = 3.2;
   mat.needsUpdate = true;
 }
 

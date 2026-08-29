@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "process-rock": "node scripts/process-rock-texture.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",

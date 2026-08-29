@@ -145,8 +145,8 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 4;
-    this.controls.maxDistance = 12;
+    this.controls.minDistance = 12;
+    this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
     // Keep the camera above the horizon so you can't tumble under the floor.
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -249,9 +249,9 @@ export class App {
    *  - FILL: a whisper of hemisphere so shadows never crush to pure black.
    */
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0x8ea0c8, 0x0c0a14, 0.15);
+    const hemi = new THREE.HemisphereLight(0x8ea0c8, 0x0c0a14, 0.32);
 
-    const key = new THREE.SpotLight(0xfff2e2, 70, 0, Math.PI / 5, 0.55, 1.8);
+    const key = new THREE.SpotLight(0xfff2e2, 85, 0, Math.PI / 4.2, 0.55, 1.6);
     key.position.set(3.4, 5.6, 2.6);
     key.target.position.set(0, 0, 0);
     key.castShadow = true;
@@ -262,12 +262,16 @@ export class App {
     key.shadow.normalBias = 0.02;
     key.shadow.radius = 5; // soft penumbra under the floating sphere
 
+    // Soft fill so charcoal facets don't crush to pure black (texture stays readable).
+    const fill = new THREE.DirectionalLight(0xb8c4e0, 1.6);
+    fill.position.set(-2.2, 3.5, 4.5);
+
     const back = new THREE.DirectionalLight(0xa9b8ff, 2.4);
     back.position.set(-3, 3.2, -4.5);
     const kick = new THREE.DirectionalLight(0xcaa6ff, 1.2);
     kick.position.set(4.5, 1.2, -3);
     // Warm specular kick — metals drink this; rock is rough so it barely shows.
-    const goldKick = new THREE.DirectionalLight(0xffe2a8, 2.8);
+    const goldKick = new THREE.DirectionalLight(0xffe2a8, 4.2);
     goldKick.position.set(-1.5, 7, 3.5);
 
     this.backLights = [
@@ -314,6 +318,7 @@ export class App {
       hemi,
       key,
       key.target,
+      fill,
       back,
       kick,
       goldKick,
