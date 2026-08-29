@@ -264,8 +264,8 @@ export function createGoldFlecks(
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
 
   const mat = new THREE.PointsMaterial({
-    color: 0xfff3c0,
-    size: 0.011,
+    color: 0xffe08a,
+    size: 0.016,
     sizeAttenuation: true,
     transparent: true,
     opacity: 1,

@@ -37,7 +37,7 @@ export type ModeName =
   | "Aurora silk"
   | "Bioluminescent reef";
 
-const GROUND_Y = -1.55; // the floor the rock floats above
+const GROUND_Y = -2.05; // the floor the rock floats above
 
 interface Stroke {
   samples: SurfaceSample[];
@@ -141,14 +141,13 @@ export class App {
 
     this.scene.background = new THREE.Color(0x0a0b10);
     this.scene.fog = new THREE.Fog(0x0a0b10, 10, 22);
-    this.camera.position.set(3.7, 1.15, 3.3);
-
+    this.camera.position.set(6.4, 1.7, 5.6);
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 1;
-    this.controls.maxDistance = 7;
-    this.controls.target.set(0, -0.05, 0);
+    this.controls.minDistance = 4;
+    this.controls.maxDistance = 12;
+    this.controls.target.set(0, -0.1, 0);
     // Keep the camera above the horizon so you can't tumble under the floor.
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
@@ -335,7 +334,7 @@ export class App {
     this.rock.castShadow = true;
     this.rock.receiveShadow = true;
 
-    const flecks = createGoldFlecks(geo);
+    const flecks = createGoldFlecks(geo, { veinCount: 18, seed: 0x601d });
     this.floatRoot.add(this.rock, flecks, this.paintRoot);
     this.scene.add(this.floatRoot);
     indexForRaycasts(this.floatRoot);
