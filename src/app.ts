@@ -161,7 +161,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 12;
+    this.controls.minDistance = 1;
     this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -306,7 +306,7 @@ export class App {
   }
 
   /**
-   * Smaller debris rocks under and around the main specimen — same charcoal/gold material,
+   * Debris rocks under, around, and above the main specimen — same charcoal/gold material,
    * each with a couple of seeded crystal clusters so the set reads as one mineral family.
    */
   private addCompanionRocks(textures: RockTextures): void {
@@ -446,6 +446,107 @@ export class App {
         position: [-2.8, -0.9, 2.4],
         rotation: [0.85, -0.4, 1.2],
         crystalClusters: 1,
+        flecks: 0,
+      },
+      // Above — larger chunks floating over the main mass.
+      {
+        seed: 201.4,
+        scale: 0.58,
+        detail: 5,
+        position: [-1.4, 2.15, 0.6],
+        rotation: [0.45, -0.9, 0.35],
+        crystalClusters: 2,
+        flecks: 3,
+      },
+      {
+        seed: 212.8,
+        scale: 0.48,
+        detail: 4,
+        position: [1.55, 2.0, -0.85],
+        rotation: [-0.55, 1.2, -0.25],
+        crystalClusters: 2,
+        flecks: 2,
+      },
+      {
+        seed: 223.1,
+        scale: 0.36,
+        detail: 4,
+        position: [0.2, 2.55, 1.35],
+        rotation: [0.7, 0.4, -0.85],
+        crystalClusters: 1,
+        flecks: 2,
+      },
+      {
+        seed: 234.6,
+        scale: 0.42,
+        detail: 4,
+        position: [-0.9, 1.85, -1.7],
+        rotation: [-0.3, 1.6, 0.55],
+        crystalClusters: 1,
+        flecks: 2,
+      },
+      // Above — smaller satellites around the upper silhouette.
+      {
+        seed: 245.2,
+        scale: 0.18,
+        detail: 3,
+        position: [2.4, 1.7, 1.1],
+        rotation: [1.0, -0.6, 0.4],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 256.7,
+        scale: 0.14,
+        detail: 3,
+        position: [-2.5, 1.95, -0.9],
+        rotation: [-0.7, 0.85, 1.1],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 267.3,
+        scale: 0.11,
+        detail: 3,
+        position: [1.1, 2.85, -0.3],
+        rotation: [0.5, 1.4, -0.7],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+      {
+        seed: 278.9,
+        scale: 0.16,
+        detail: 3,
+        position: [-1.8, 2.4, 1.6],
+        rotation: [1.2, 0.2, -0.45],
+        crystalClusters: 1,
+        flecks: 1,
+      },
+      {
+        seed: 289.5,
+        scale: 0.09,
+        detail: 3,
+        position: [0.55, 3.05, 0.9],
+        rotation: [-1.0, 0.7, 0.9],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+      {
+        seed: 301.2,
+        scale: 0.13,
+        detail: 3,
+        position: [2.0, 2.25, -1.8],
+        rotation: [0.35, -1.3, 0.6],
+        crystalClusters: 1,
+        flecks: 0,
+      },
+      {
+        seed: 312.8,
+        scale: 0.08,
+        detail: 3,
+        position: [-0.4, 2.7, -2.0],
+        rotation: [0.9, 1.1, -0.2],
+        crystalClusters: 0,
         flecks: 0,
       },
     ];
