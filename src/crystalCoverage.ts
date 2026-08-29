@@ -4,9 +4,9 @@ import { mulberry32, type SurfaceSample } from "./modes/mode";
 /**
  * Random crystal coverage for a rock mesh.
  *
- * `coverage` is 0..1. Mix of short surface veins + packed dots.
- * Samples triangles directly (no giant face list) so rebuild stays snappy
- * even on high-detail rocks.
+ * `coverage` is 0..1 of *visual* surface fill. Packing uses the crystal's
+ * apparent patch size (≈ crystalSize), not the wide cluster-spread disk —
+ * otherwise coverage=1 still looks ~10% covered.
  */
 
 export interface CrystalCoverageOpts {
@@ -21,27 +21,32 @@ export interface CrystalCoverageOpts {
 export function estimateSurfaceArea(geo: THREE.BufferGeometry): number {
   geo.computeBoundingSphere();
   const r = geo.boundingSphere?.radius ?? 1;
-  // Displaced rock ≈ sphere area; good enough for coverage packing.
   return 4 * Math.PI * r * r;
 }
 
+/**
+ * How many clusters for this coverage.
+ * Patch radius tracks crystal height (what you see), not spread (internal offset).
+ */
 export function clusterCountForCoverage(
   surfaceArea: number,
   coverage: number,
   crystalSize: number,
-  spread: number,
+  _spread: number,
 ): number {
   const t = THREE.MathUtils.clamp(coverage, 0, 1);
   if (t <= 0) return 0;
-  const radius = Math.max(crystalSize * spread * 0.3, 0.018);
+  // Visual patch ≈ main crystal width on the rock (~half the height).
+  const radius = Math.max(crystalSize * 0.42, 0.02);
   const footprint = Math.PI * radius * radius;
-  const packed = Math.max(1, Math.floor(surfaceArea / (footprint * 0.5)));
-  const MAX_CLUSTERS = 560;
-  return Math.max(12, Math.min(MAX_CLUSTERS, Math.round(t * packed)));
+  // Overlap a bit so 1.0 reads as encrusted, not a polite polka-dot grid.
+  const packed = Math.max(1, Math.floor(surfaceArea / (footprint * 0.35)));
+  const MAX_CLUSTERS = 2800;
+  return Math.max(20, Math.min(MAX_CLUSTERS, Math.round(t * packed)));
 }
 
 /**
- * Coverage as vein paths + gap-filling dots. Always returns samples when coverage > 0.
+ * Coverage samples: thick veins + dense gap fill. Always returns samples when coverage > 0.
  */
 export function sampleRockCoverageVeins(
   geo: THREE.BufferGeometry,
@@ -66,11 +71,13 @@ export function sampleRockCoverageVeins(
   );
 
   const t = THREE.MathUtils.clamp(opts.coverage, 0, 1);
-  const veinBudget = Math.max(6, Math.round(target * 0.5));
-  const dotBudget = Math.max(6, target - veinBudget);
-  const spacing = Math.max(opts.crystalSize * opts.spread * 0.2, 0.03);
-  const veinCount = Math.max(4, Math.round(8 + t * 40));
-  const perVein = Math.max(5, Math.ceil(veinBudget / veinCount));
+  // Mostly packed dots; veins are accents (~30% of budget).
+  const veinBudget = Math.max(10, Math.round(target * 0.3));
+  const dotBudget = Math.max(10, target - veinBudget);
+  // Spacing matches visual patch — tight enough that coverage=1 looks full.
+  const spacing = Math.max(opts.crystalSize * 0.48, 0.025);
+  const veinCount = Math.max(6, Math.round(10 + t * 50));
+  const perVein = Math.max(6, Math.ceil(veinBudget / veinCount));
 
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
@@ -80,6 +87,44 @@ export function sampleRockCoverageVeins(
   const n = new THREE.Vector3();
   const mid = new THREE.Vector3();
   const p = new THREE.Vector3();
+
+  // Grid for O(1) proximity checks — linear scan dies at thousands of samples.
+  const cell = spacing;
+  const buckets = new Map<string, THREE.Vector3[]>();
+  const keyOf = (x: number, y: number, z: number): string =>
+    `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
+
+  const tooClose = (x: number, y: number, z: number, minD: number): boolean => {
+    const minDSq = minD * minD;
+    const cx = Math.floor(x / cell);
+    const cy = Math.floor(y / cell);
+    const cz = Math.floor(z / cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = buckets.get(`${cx + dx},${cy + dy},${cz + dz}`);
+          if (!list) continue;
+          for (const q of list) {
+            const ddx = x - q.x;
+            const ddy = y - q.y;
+            const ddz = z - q.z;
+            if (ddx * ddx + ddy * ddy + ddz * ddz < minDSq) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  const occupy = (v: THREE.Vector3): void => {
+    const k = keyOf(v.x, v.y, v.z);
+    let list = buckets.get(k);
+    if (!list) {
+      list = [];
+      buckets.set(k, list);
+    }
+    list.push(v);
+  };
 
   const readTri = (
     tri: number,
@@ -153,27 +198,15 @@ export function sampleRockCoverageVeins(
     };
   };
 
-  const occupied: THREE.Vector3[] = [];
-  const tooClose = (x: number, y: number, z: number, minD: number): boolean => {
-    const minDSq = minD * minD;
-    for (const q of occupied) {
-      const dx = x - q.x;
-      const dy = y - q.y;
-      const dz = z - q.z;
-      if (dx * dx + dy * dy + dz * dz < minDSq) return true;
-    }
-    return false;
-  };
-
   const sampleOne = (minD: number): SurfaceSample | null => {
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 64; attempt++) {
       const tri = pickTri();
       const face = readTri(tri);
       if (!face.ok) continue;
       pointOnTri();
       if (tooClose(p.x, p.y, p.z, minD)) continue;
       const s = makeSample(p.x, p.y, p.z, face.nx, face.ny, face.nz);
-      occupied.push(s.local);
+      occupy(s.local);
       return s;
     }
     return null;
@@ -181,9 +214,9 @@ export function sampleRockCoverageVeins(
 
   const veins: SurfaceSample[][] = [];
 
-  // --- veins: crawl in the tangent plane, re-snap to nearby triangles ---
+  // --- veins ---
   for (let v = 0; v < veinCount; v++) {
-    const start = sampleOne(spacing * 1.4);
+    const start = sampleOne(spacing * 1.1);
     if (!start) continue;
     const vein: SurfaceSample[] = [start];
 
@@ -199,17 +232,16 @@ export function sampleRockCoverageVeins(
       .normalize();
 
     const cursor = start.local.clone();
-    const step = spacing * (0.65 + rnd() * 0.4);
+    const step = spacing * (0.55 + rnd() * 0.35);
 
     for (let i = 1; i < perVein; i++) {
       cursor
         .addScaledVector(dir, step)
-        .addScaledVector(bitangent, (rnd() - 0.5) * step * 0.4);
+        .addScaledVector(bitangent, (rnd() - 0.5) * step * 0.45);
 
-      // Snap: try random tris, keep the closest centroid to cursor.
       let bestTri = -1;
       let bestDist = Infinity;
-      for (let k = 0; k < 36; k++) {
+      for (let k = 0; k < 48; k++) {
         const tri = pickTri();
         const face = readTri(tri);
         if (!face.ok) continue;
@@ -228,11 +260,9 @@ export function sampleRockCoverageVeins(
       const face = readTri(bestTri);
       if (!face.ok) break;
       pointOnTri();
-      cursor.lerp(p, 0.8);
-      if (tooClose(cursor.x, cursor.y, cursor.z, spacing * 0.45)) {
-        // Nudge along and keep trying — don't kill the whole vein.
-        continue;
-      }
+      cursor.lerp(p, 0.85);
+      if (tooClose(cursor.x, cursor.y, cursor.z, spacing * 0.4)) continue;
+
       normal.set(face.nx, face.ny, face.nz);
       const s = makeSample(
         cursor.x,
@@ -243,7 +273,26 @@ export function sampleRockCoverageVeins(
         face.nz,
       );
       vein.push(s);
-      occupied.push(s.local);
+      occupy(s.local);
+
+      // Side spur — thickens the seam.
+      if (rnd() < 0.35) {
+        const spur = cursor
+          .clone()
+          .addScaledVector(bitangent, (rnd() < 0.5 ? -1 : 1) * step * 0.7);
+        if (!tooClose(spur.x, spur.y, spur.z, spacing * 0.35)) {
+          const ss = makeSample(
+            spur.x,
+            spur.y,
+            spur.z,
+            face.nx,
+            face.ny,
+            face.nz,
+          );
+          vein.push(ss);
+          occupy(ss.local);
+        }
+      }
 
       dir.sub(normal.clone().multiplyScalar(dir.dot(normal)));
       if (dir.lengthSq() < 1e-6) {
@@ -258,11 +307,20 @@ export function sampleRockCoverageVeins(
     if (vein.length >= 3) veins.push(vein);
   }
 
-  // --- packed dots between veins ---
+  // --- dense dots (bulk of the coverage %) ---
   const dots: SurfaceSample[] = [];
-  for (let i = 0; i < dotBudget * 25 && dots.length < dotBudget; i++) {
-    const s = sampleOne(spacing * 0.75);
+  const dotAttempts = Math.max(dotBudget * 40, 2000);
+  for (let i = 0; i < dotAttempts && dots.length < dotBudget; i++) {
+    const s = sampleOne(spacing * 0.72);
     if (s) dots.push(s);
+  }
+  // If min-distance blocked us, relax and finish the budget.
+  if (dots.length < dotBudget * 0.85) {
+    const need = dotBudget - dots.length;
+    for (let i = 0; i < need * 30 && dots.length < dotBudget; i++) {
+      const s = sampleOne(spacing * 0.4);
+      if (s) dots.push(s);
+    }
   }
   if (dots.length > 0) veins.push(dots);
 
@@ -273,7 +331,9 @@ export function sampleRockCoverageVeins(
       const face = readTri(tri);
       if (!face.ok) continue;
       pointOnTri();
-      emergency.push(makeSample(p.x, p.y, p.z, face.nx, face.ny, face.nz));
+      const s = makeSample(p.x, p.y, p.z, face.nx, face.ny, face.nz);
+      emergency.push(s);
+      occupy(s.local);
     }
     if (emergency.length > 0) return [emergency];
   }
