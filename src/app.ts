@@ -828,13 +828,6 @@ export class App {
     };
     this.strokes.push(stroke);
     this.buildStroke(stroke, true);
-    const toasts: Record<ModeName, string> = {
-      Crystals: "💎 crystals seeded — watch them grow",
-      "Molten fissures": "🔥 fissure torn open — stand back",
-      "Aurora silk": "🌌 aurora silk unfurling — look up",
-      "Bioluminescent reef": "🪸 reef colony seeded — watch it come alive",
-    };
-    this.showToast(toasts[stroke.mode]);
   }
 
   private buildStroke(stroke: Stroke, animate: boolean): void {

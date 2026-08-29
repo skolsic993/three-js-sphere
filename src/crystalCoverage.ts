@@ -26,7 +26,9 @@ export function estimateSurfaceArea(geo: THREE.BufferGeometry): number {
 
 /**
  * How many clusters for this coverage.
- * Patch radius tracks crystal height (what you see), not spread (internal offset).
+ *
+ * Cap is applied to the *100%* budget first, then multiplied by coverage —
+ * so 0.6 is ~60% as many crystals as 1.0 (not the same count hitting a shared max).
  */
 export function clusterCountForCoverage(
   surfaceArea: number,
@@ -39,10 +41,12 @@ export function clusterCountForCoverage(
   // Visual patch ≈ main crystal width on the rock (~half the height).
   const radius = Math.max(crystalSize * 0.42, 0.02);
   const footprint = Math.PI * radius * radius;
-  // Overlap a bit so 1.0 reads as encrusted, not a polite polka-dot grid.
-  const packed = Math.max(1, Math.floor(surfaceArea / (footprint * 0.35)));
-  const MAX_CLUSTERS = 2800;
-  return Math.max(20, Math.min(MAX_CLUSTERS, Math.round(t * packed)));
+  const MAX_AT_FULL = 2800;
+  const fullPack = Math.min(
+    MAX_AT_FULL,
+    Math.max(1, Math.floor(surfaceArea / (footprint * 0.35))),
+  );
+  return Math.max(1, Math.round(t * fullPack));
 }
 
 /**
@@ -71,13 +75,14 @@ export function sampleRockCoverageVeins(
   );
 
   const t = THREE.MathUtils.clamp(opts.coverage, 0, 1);
-  // Mostly packed dots; veins are accents (~30% of budget).
-  const veinBudget = Math.max(10, Math.round(target * 0.3));
-  const dotBudget = Math.max(10, target - veinBudget);
+  // Vein vs dot split scales with the same linear budget.
+  const veinBudget = Math.max(1, Math.round(target * 0.3));
+  const dotBudget = Math.max(1, target - veinBudget);
   // Spacing matches visual patch — tight enough that coverage=1 looks full.
   const spacing = Math.max(opts.crystalSize * 0.48, 0.025);
-  const veinCount = Math.max(6, Math.round(10 + t * 50));
-  const perVein = Math.max(6, Math.ceil(veinBudget / veinCount));
+  // Vein *count* also scales with coverage (not a flat 40–60 band).
+  const veinCount = Math.max(1, Math.round(t * 55));
+  const perVein = Math.max(3, Math.ceil(veinBudget / Math.max(1, veinCount)));
 
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
