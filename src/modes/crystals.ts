@@ -43,14 +43,14 @@ export interface CrystalSettings {
 
 export const defaultCrystalSettings: CrystalSettings = {
   palette: "Citrine",
-  clusterDensity: 11,
-  crystalSize: 0.07,
-  shards: 3,
-  spread: 0.42,
-  tilt: 0.16,
-  sizeJitter: 0.2,
-  clearMix: 0,
-  glow: 0.15,
+  clusterDensity: 16,
+  crystalSize: 0.112,
+  shards: 16,
+  spread: 2.5,
+  tilt: 0.545,
+  sizeJitter: 1,
+  clearMix: 0.312,
+  glow: 0,
   growthSpeed: 1.4,
 };
 
@@ -143,8 +143,18 @@ function makeCrystalGeometry(rnd: () => number): THREE.BufferGeometry {
   }
 
   const positions: number[] = [];
+  const uvs: number[] = [];
+  const pushUv = (p: THREE.Vector3): void => {
+    // Cylindrical unwrap so the scratched gold map reads on every facet.
+    const u = 0.5 + Math.atan2(p.x, p.z) / (Math.PI * 2);
+    const v = THREE.MathUtils.clamp(p.y, 0, 1);
+    uvs.push(u, v);
+  };
   const push = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): void => {
     positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    pushUv(a);
+    pushUv(b);
+    pushUv(c);
   };
   const bottom = new THREE.Vector3(0, -0.02, 0); // tiny below-base apex closes tilted crystals
   for (let i = 0; i < sides; i++) {
@@ -157,6 +167,7 @@ function makeCrystalGeometry(rnd: () => number): THREE.BufferGeometry {
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   geo.computeVertexNormals(); // non-indexed → true flat facets
   return geo;
 }
@@ -179,6 +190,95 @@ function getVariantGeometries(): THREE.BufferGeometry[] {
 
 const materials = new Map<CrystalPaletteName, THREE.MeshStandardMaterial>();
 
+/** Crop one vertical strip from the 6-panel gold collage into albedo + roughness maps. */
+async function loadGoldMaps(): Promise<{
+  map: THREE.Texture;
+  roughnessMap: THREE.Texture;
+}> {
+  const full = await new THREE.TextureLoader().loadAsync(
+    "/textures/gold_textures_for_you__by_hibbary_dea5nys-fullview.jpg",
+  );
+  const img = full.image as HTMLImageElement | ImageBitmap;
+  // Strip 3 (0-based) = bright yellow gold in the collage.
+  const stripIndex = 3;
+  const stripW = Math.floor(img.width / 6);
+  const stripH = img.height;
+
+  const albedo = document.createElement("canvas");
+  albedo.width = stripW;
+  albedo.height = stripH;
+  const aCtx = albedo.getContext("2d", { willReadFrequently: true });
+  if (!aCtx) throw new Error("Could not crop gold albedo");
+  aCtx.drawImage(
+    img,
+    stripIndex * stripW,
+    0,
+    stripW,
+    stripH,
+    0,
+    0,
+    stripW,
+    stripH,
+  );
+
+  // Roughness from luminance: bright scratches → slightly rougher, dark foil → smoother.
+  const { data } = aCtx.getImageData(0, 0, stripW, stripH);
+  const roughData = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    const lum =
+      (data[i]! * 0.299 + data[i + 1]! * 0.587 + data[i + 2]! * 0.114) / 255;
+    const r = Math.round(THREE.MathUtils.clamp(0.22 + lum * 0.55, 0, 1) * 255);
+    roughData[i] = r;
+    roughData[i + 1] = r;
+    roughData[i + 2] = r;
+    roughData[i + 3] = 255;
+  }
+  const roughCanvas = document.createElement("canvas");
+  roughCanvas.width = stripW;
+  roughCanvas.height = stripH;
+  const rCtx = roughCanvas.getContext("2d");
+  if (!rCtx) throw new Error("Could not build gold roughness map");
+  rCtx.putImageData(new ImageData(roughData, stripW, stripH), 0, 0);
+
+  const map = new THREE.CanvasTexture(albedo);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(1.6, 1.6);
+  map.anisotropy = 8;
+
+  const roughnessMap = new THREE.CanvasTexture(roughCanvas);
+  roughnessMap.colorSpace = THREE.NoColorSpace;
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.copy(map.repeat);
+  roughnessMap.anisotropy = 8;
+
+  full.dispose();
+  return { map, roughnessMap };
+}
+
+let goldMapsPromise: Promise<{
+  map: THREE.Texture;
+  roughnessMap: THREE.Texture;
+}> | null = null;
+
+/** Load scratched gold maps and attach them to the Citrine (metallic) material. */
+export async function prepareCrystalGoldMaps(): Promise<void> {
+  if (!goldMapsPromise) goldMapsPromise = loadGoldMaps();
+  const { map, roughnessMap } = await goldMapsPromise;
+  const mat = getMaterial("Citrine", 0);
+  mat.map = map;
+  mat.roughnessMap = roughnessMap;
+  // Let the texture drive color; keep a slight warm tint so instance colors still work.
+  mat.color.set(0xfff0d0);
+  mat.roughness = 0.22;
+  mat.metalness = 1;
+  // Dark studio needs a strong local boost so gold actually glints.
+  mat.envMapIntensity = 3.4;
+  mat.needsUpdate = true;
+}
+
 function getMaterial(
   name: CrystalPaletteName,
   glow: number,
@@ -187,13 +287,12 @@ function getMaterial(
   if (!mat) {
     const p = PALETTES[name];
     if (name === "Citrine") {
-      // Opaque metallic gold (not transmissive quartz). Color is gold's measured
-      // reflectance in sRGB; instance colors only add light variation on top.
+      // Opaque metallic gold (not transmissive quartz). Map applied via prepareCrystalGoldMaps.
       mat = new THREE.MeshStandardMaterial({
         color: 0xffe29b,
         metalness: 1,
-        roughness: 0.28,
-        envMapIntensity: 1.5,
+        roughness: 0.22,
+        envMapIntensity: 3.4,
         emissive: p.emissive,
         emissiveIntensity: glow,
       });
@@ -532,8 +631,8 @@ class CrystalStroke implements StrokeInstance {
           (inst.kind !== "shard" || inst.shardIndex < shardCap);
 
         // Clear-quartz mix: stable rank, so raising the slider converts the same
-        // crystals every time instead of reshuffling. Gold (Citrine) stays fully metal.
-        inst.isClear = s.palette !== "Citrine" && inst.clearRnd < s.clearMix;
+        // crystals every time instead of reshuffling.
+        inst.isClear = inst.clearRnd < s.clearMix;
 
         // Size (height + independent width), through the jitter slider.
         const jitterMul =

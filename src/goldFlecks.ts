@@ -6,8 +6,6 @@ import { mulberry32 } from "./modes/mode";
  * valleys, not floating scatter. Positions are rock-local.
  */
 
-const GOLD = 0xffe29b;
-
 export function createGoldFlecks(
   rockGeo: THREE.BufferGeometry,
   opts: { veinCount?: number; seed?: number } = {},
@@ -146,8 +144,8 @@ export function createGoldFlecks(
     const steps = Math.max(2, Math.floor(density));
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
-      // Density varies: denser mid-segments with occasional sparse gaps (reference veins).
-      if (rnd() > 0.12 + density * 0.04 && s > 0 && s < steps) continue;
+      // Occasional gaps so veins thin out like the reference (not a solid rope).
+      if (s > 0 && s < steps && rnd() < 0.14) continue;
       const x = pos.getX(a) * (1 - t) + pos.getX(b) * t;
       const y = pos.getY(a) * (1 - t) + pos.getY(b) * t;
       const z = pos.getZ(a) * (1 - t) + pos.getZ(b) * t;
@@ -155,7 +153,16 @@ export function createGoldFlecks(
       const ny = nrm.getY(a) * (1 - t) + nrm.getY(b) * t;
       const nz = nrm.getZ(a) * (1 - t) + nrm.getZ(b) * t;
       const len = Math.hypot(nx, ny, nz) || 1;
-      pushAt(x, y, z, nx / len, ny / len, nz / len, -0.002 + rnd() * 0.004, 0.004);
+      pushAt(
+        x,
+        y,
+        z,
+        nx / len,
+        ny / len,
+        nz / len,
+        -0.002 + rnd() * 0.004,
+        0.004,
+      );
       // Hotspot clusters along the path.
       if (rnd() < 0.18) {
         pushAt(x, y, z, nx / len, ny / len, nz / len, -0.001, 0.008);
@@ -257,13 +264,14 @@ export function createGoldFlecks(
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
 
   const mat = new THREE.PointsMaterial({
-    color: GOLD,
-    size: 0.009,
+    color: 0xfff3c0,
+    size: 0.011,
     sizeAttenuation: true,
     transparent: true,
-    opacity: 0.95,
+    opacity: 1,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
+    toneMapped: false, // stay bright against the dark studio / ACES curve
   });
 
   const points = new THREE.Points(geo, mat);

@@ -8,6 +8,7 @@ import type { PaintMode, StrokeInstance, SurfaceSample } from "./modes/mode";
 import {
   crystalMode,
   defaultCrystalSettings,
+  prepareCrystalGoldMaps,
   setCrystalGlow,
   type CrystalSettings,
 } from "./modes/crystals";
@@ -145,7 +146,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 3;
+    this.controls.minDistance = 1;
     this.controls.maxDistance = 7;
     this.controls.target.set(0, -0.05, 0);
     // Keep the camera above the horizon so you can't tumble under the floor.
@@ -154,6 +155,8 @@ export class App {
     this.setupEnvironment();
     this.setupLights();
     await this.setupCanvasRock();
+    await prepareCrystalGoldMaps();
+    setCrystalGlow(this.crystal.glow);
     this.setupDust();
     this.setupPost();
 
@@ -225,6 +228,10 @@ export class App {
     panel(0xffd9b0, 3.5, 1.6, 5, [6, 1.5, 3]); // warm strip, camera-right
     panel(0x8a5cff, 4, 6, 3.5, [0, 2.5, -8]); // violet wash behind the subject
     panel(0x2e3c58, 1.2, 9, 9, [0, -5, 0]); // dim floor bounce
+    // Hot gold-biased glints — metals need bright things to reflect; rock keeps low envMapIntensity.
+    panel(0xffe6b0, 40, 0.35, 3.2, [-1.2, 6.5, 4]);
+    panel(0xffffff, 55, 0.25, 2.4, [2.8, 5.5, -3.5]);
+    panel(0xffc878, 28, 0.5, 1.8, [5, 4, 1]);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(env, 0.04).texture;
@@ -260,6 +267,10 @@ export class App {
     back.position.set(-3, 3.2, -4.5);
     const kick = new THREE.DirectionalLight(0xcaa6ff, 1.2);
     kick.position.set(4.5, 1.2, -3);
+    // Warm specular kick — metals drink this; rock is rough so it barely shows.
+    const goldKick = new THREE.DirectionalLight(0xffe2a8, 2.8);
+    goldKick.position.set(-1.5, 7, 3.5);
+
     this.backLights = [
       { light: back, base: 2.4 },
       { light: kick, base: 1.2 },
@@ -300,7 +311,17 @@ export class App {
       }),
     );
 
-    this.scene.add(hemi, key, key.target, back, kick, under, ground, backdrop);
+    this.scene.add(
+      hemi,
+      key,
+      key.target,
+      back,
+      kick,
+      goldKick,
+      under,
+      ground,
+      backdrop,
+    );
   }
 
   /** The canvas itself: a jagged dark rock with Poly Haven PBR maps — quiet stage for crystals.
