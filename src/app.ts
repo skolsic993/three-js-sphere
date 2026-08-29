@@ -1,10 +1,10 @@
 import * as THREE from "three/webgpu";
-import { float, pass, screenUV, smoothstep, vec2 } from "three/tsl";
-import { bloom } from "three/addons/tsl/display/BloomNode.js";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { indexForRaycasts } from "./bvh";
-import { SurfacePainter } from "./surfacePainter";
-import type { PaintMode, StrokeInstance, SurfaceSample } from "./modes/mode";
+import {float, pass, screenUV, smoothstep, vec2} from "three/tsl";
+import {bloom} from "three/addons/tsl/display/BloomNode.js";
+import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+import {indexForRaycasts} from "./bvh";
+import {SurfacePainter} from "./surfacePainter";
+import type {PaintMode, StrokeInstance, SurfaceSample} from "./modes/mode";
 import {
   crystalMode,
   defaultCrystalSettings,
@@ -21,8 +21,7 @@ import {
   defaultAuroraSettings,
   type AuroraSettings,
 } from "./modes/aurora";
-import { defaultReefSettings, reefMode, type ReefSettings } from "./modes/reef";
-import { buildGui } from "./ui";
+import {defaultReefSettings, reefMode, type ReefSettings} from "./modes/reef";
 
 export type ModeName =
   | "Crystals"
@@ -62,10 +61,10 @@ export class App {
     bloomThreshold: 0.75,
   };
 
-  readonly crystal: CrystalSettings = { ...defaultCrystalSettings };
-  readonly fissure: FissureSettings = { ...defaultFissureSettings };
-  readonly aurora: AuroraSettings = { ...defaultAuroraSettings };
-  readonly reef: ReefSettings = { ...defaultReefSettings };
+  readonly crystal: CrystalSettings = {...defaultCrystalSettings};
+  readonly fissure: FissureSettings = {...defaultFissureSettings};
+  readonly aurora: AuroraSettings = {...defaultAuroraSettings};
+  readonly reef: ReefSettings = {...defaultReefSettings};
 
   /** Registry of painting modes — new modes plug in here. */
   private modes: Record<ModeName, PaintMode<unknown>> = {
@@ -79,13 +78,13 @@ export class App {
   private settingsFor(mode: ModeName): unknown {
     switch (mode) {
       case "Crystals":
-        return { ...this.crystal };
+        return {...this.crystal};
       case "Molten fissures":
-        return { ...this.fissure };
+        return {...this.fissure};
       case "Aurora silk":
-        return { ...this.aurora };
+        return {...this.aurora};
       case "Bioluminescent reef":
-        return { ...this.reef };
+        return {...this.reef};
     }
   }
 
@@ -109,20 +108,20 @@ export class App {
   private dust!: THREE.Points;
   private dustVel: number[] = [];
   /** The backlight/kicker pair, scaled together by the Backlight slider. */
-  private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
+  private backLights: {light: THREE.DirectionalLight; base: number}[] = [];
 
   private hud = document.getElementById("hud")!;
   private lastTime = 0;
   private hovering = false;
   private toastTimer = 0;
-  private regrowPending: { mode: "instant" | "animate" } | null = null;
+  private regrowPending: {mode: "instant" | "animate"} | null = null;
   private lastRegrowAt = 0;
   private regrowCost = 0;
 
   constructor(private container: HTMLElement) {}
 
   async start(): Promise<void> {
-    const renderer = new THREE.WebGPURenderer({ antialias: true });
+    const renderer = new THREE.WebGPURenderer({antialias: true});
     await renderer.init();
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -204,7 +203,7 @@ export class App {
       h: number,
       pos: [number, number, number],
     ): void => {
-      const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+      const mat = new THREE.MeshBasicMaterial({side: THREE.DoubleSide});
       mat.color.set(color).multiplyScalar(intensity); // HDR: >1 colors become light sources
       const m = new THREE.Mesh(geo, mat);
       m.scale.set(w, h, 1);
@@ -255,8 +254,8 @@ export class App {
     const kick = new THREE.DirectionalLight(0xcaa6ff, 1.2);
     kick.position.set(4.5, 1.2, -3);
     this.backLights = [
-      { light: back, base: 2.4 },
-      { light: kick, base: 1.2 },
+      {light: back, base: 2.4},
+      {light: kick, base: 1.2},
     ];
 
     // Faint violet underglow: lifts the sphere's shadowed underside off the floor,
@@ -353,7 +352,7 @@ export class App {
 
   /** Post: MSAA scene pass + bloom + a gentle lens vignette, tone-mapped on output. */
   private setupPost(): void {
-    const scenePass = pass(this.scene, this.camera, { samples: 4 });
+    const scenePass = pass(this.scene, this.camera, {samples: 4});
     const color = scenePass.getTextureNode();
     this.bloomNode = bloom(
       color,
@@ -414,7 +413,7 @@ export class App {
    */
   scheduleRegrow(mode: "instant" | "animate"): void {
     if (this.regrowPending?.mode === "animate") return; // an animate request always wins
-    this.regrowPending = { mode };
+    this.regrowPending = {mode};
   }
 
   undoLast(): void {
@@ -471,7 +470,7 @@ export class App {
   /** Backlight slider: scales the rear rig — how hard light streams through the crystals. */
   setBacklight(v: number): void {
     this.settings.backlight = v;
-    for (const { light, base } of this.backLights) light.intensity = base * v;
+    for (const {light, base} of this.backLights) light.intensity = base * v;
   }
 
   setBloomStrength(v: number): void {
@@ -508,7 +507,7 @@ export class App {
   }
 
   private updateHud(): void {
-    const backend = (this.renderer.backend as { isWebGPUBackend?: boolean })
+    const backend = (this.renderer.backend as {isWebGPUBackend?: boolean})
       .isWebGPUBackend
       ? "WebGPU"
       : "WebGL2 (fallback)";
