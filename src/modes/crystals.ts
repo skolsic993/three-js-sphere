@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { buildCrystalGoldMaps, loadGoldStrip } from "../goldMaps";
 import {
   mulberry32,
@@ -8,10 +9,10 @@ import {
 } from "./mode";
 
 /**
- * Crystal painting mode. Each stroke seeds clusters of quartz-like points along the painted
- * path: one dominant crystal per cluster surrounded by smaller shards and rubble, all leaning
- * off the surface normal at natural angles. Crystals are transmissive (refractive glass with
- * colored absorption), lightly iridescent, and grow in with an elastic pop as the growth
+ * Crystal painting mode. Each stroke seeds clusters of rounded gold-nugget chunks along the
+ * painted path: one dominant nugget per cluster surrounded by smaller shards and rubble,
+ * lightly sunk into the surface. Citrine reads as scratched metallic ore; other palettes
+ * stay transmissive glass on the same mesh, growing in with an elastic pop as the growth
  * front sweeps along the stroke.
  *
  * Every slider is TRULY live: a stroke stores each crystal's generative parameters (anchor,
@@ -38,7 +39,7 @@ export interface CrystalSettings {
    */
   surfaceCoverage: number;
   clusterDensity: number; // clusters per world unit of stroke (live-culled up to MAX_DENSITY)
-  crystalSize: number; // height of a cluster's main crystal (world units)
+  crystalSize: number; // size of a cluster's main nugget (world units)
   shards: number; // secondary crystals per cluster (live-culled up to MAX_SHARDS)
   spread: number; // cluster footprint, as a multiple of crystalSize
   tilt: number; // 0..1 — how far crystals lean away from the surface normal
@@ -52,10 +53,10 @@ export const defaultCrystalSettings: CrystalSettings = {
   palette: "Citrine",
   surfaceCoverage: 0.8,
   clusterDensity: 16,
-  crystalSize: 0.08,
-  shards: 8,
-  spread: 2.5,
-  tilt: 1,
+  crystalSize: 0.035,
+  shards: 7,
+  spread: 1.6,
+  tilt: 0.4,
   sizeJitter: 1,
   clearMix: 0,
   glow: 0,
@@ -119,64 +120,66 @@ const PALETTES: Record<CrystalPaletteName, Palette> = {
 // ---------- shared geometry variants ----------
 
 /**
- * A quartz point: hexagonal prism with jittered facet columns, a slight taper, and an
- * off-axis pyramidal termination. Non-indexed so every facet is flat-shaded — the hard
- * planar faces are what read as "crystal" under an environment map.
+ * Irregular gold-nugget chunk: subdivided box, non-uniform axes, rounded corners + noise.
+ * Vertices are welded so averaged normals read soft ore at zoom — not razor crystal tips.
  * Normalized to height 1 with the base at y=0.
  */
 function makeCrystalGeometry(rnd: () => number): THREE.BufferGeometry {
-  const sides = 6;
-  const baseR = 0.16 + rnd() * 0.1;
-  const shaftH = 0.55 + rnd() * 0.2; // where the termination starts
-  const taper = 0.78 + rnd() * 0.16; // shaft narrows slightly toward the tip
-  const apex = new THREE.Vector3((rnd() - 0.5) * 0.14, 1, (rnd() - 0.5) * 0.14);
+  // 3 segs/axis gives edge midpoints so corner rounding has room to curve.
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1, 3, 3, 3);
+  const pos = boxGeo.attributes.position;
+  const sx = 0.78 + rnd() * 0.4; // 0.78–1.18
+  const sy = 0.62 + rnd() * 0.32; // 0.62–0.94 — slightly flatter chunk
+  const sz = 0.72 + rnd() * 0.4; // 0.72–1.12
+  // How far to pull the box toward an ellipsoid (0 = box, 1 = smooth oval).
+  const roundAmt = 0.48 + rnd() * 0.22;
+  const tmp = new THREE.Vector3();
 
-  // Jitter each facet column once so the prism edges stay straight top to bottom.
-  const angles: number[] = [];
-  const radii: number[] = [];
-  for (let i = 0; i < sides; i++) {
-    angles.push(((i + (rnd() - 0.5) * 0.34) / sides) * Math.PI * 2);
-    radii.push(baseR * (0.8 + rnd() * 0.4));
+  for (let i = 0; i < pos.count; i++) {
+    tmp.fromBufferAttribute(pos, i);
+    // Unit-cube coords before squash — used for sphere blend.
+    const ux = tmp.x;
+    const uy = tmp.y;
+    const uz = tmp.z;
+    const len = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+
+    // Lerp box point toward ellipsoid surface for visibly rounded corners.
+    tmp.x = THREE.MathUtils.lerp(ux, ux / len, roundAmt) * sx;
+    tmp.y = THREE.MathUtils.lerp(uy, uy / len, roundAmt) * sy;
+    tmp.z = THREE.MathUtils.lerp(uz, uz / len, roundAmt) * sz;
+
+    const noise = 1 + (rnd() - 0.5) * 0.16;
+    tmp.multiplyScalar(noise);
+    pos.setXYZ(i, tmp.x, tmp.y, tmp.z);
   }
+  pos.needsUpdate = true;
 
-  const lower: THREE.Vector3[] = [];
-  const upper: THREE.Vector3[] = [];
-  for (let i = 0; i < sides; i++) {
-    const c = Math.cos(angles[i]);
-    const s = Math.sin(angles[i]);
-    lower.push(new THREE.Vector3(c * radii[i], 0, s * radii[i]));
-    upper.push(
-      new THREE.Vector3(c * radii[i] * taper, shaftH, s * radii[i] * taper),
-    );
+  // Weld face-split verts so computeVertexNormals averages across edges.
+  const geo = mergeVertices(boxGeo, 1e-4);
+  boxGeo.dispose();
+  const welded = geo.attributes.position;
+
+  geo.computeBoundingBox();
+  const box = geo.boundingBox!;
+  const minY = box.min.y;
+  const height = Math.max(box.max.y - minY, 1e-6);
+  for (let i = 0; i < welded.count; i++) {
+    tmp.fromBufferAttribute(welded, i);
+    welded.setXYZ(i, tmp.x / height, (tmp.y - minY) / height, tmp.z / height);
   }
+  welded.needsUpdate = true;
 
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const pushUv = (p: THREE.Vector3): void => {
-    // Cylindrical unwrap so the scratched gold map reads on every facet.
-    const u = 0.5 + Math.atan2(p.x, p.z) / (Math.PI * 2);
-    const v = THREE.MathUtils.clamp(p.y, 0, 1);
-    uvs.push(u, v);
-  };
-  const push = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): void => {
-    positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-    pushUv(a);
-    pushUv(b);
-    pushUv(c);
-  };
-  const bottom = new THREE.Vector3(0, -0.02, 0); // tiny below-base apex closes tilted crystals
-  for (let i = 0; i < sides; i++) {
-    const j = (i + 1) % sides;
-    push(lower[i], upper[i], upper[j]); // shaft facet (two tris)
-    push(lower[i], upper[j], lower[j]);
-    push(upper[i], apex, upper[j]); // termination facet
-    push(lower[j], bottom, lower[i]); // base cap
+  // Cylindrical unwrap so the scratched gold map wraps the nugget.
+  const uvs = geo.attributes.uv;
+  for (let i = 0; i < welded.count; i++) {
+    tmp.fromBufferAttribute(welded, i);
+    const u = 0.5 + Math.atan2(tmp.x, tmp.z) / (Math.PI * 2);
+    const v = THREE.MathUtils.clamp(tmp.y, 0, 1);
+    uvs.setXY(i, u, v);
   }
+  uvs.needsUpdate = true;
 
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geo.computeVertexNormals(); // non-indexed → true flat facets
+  geo.computeVertexNormals();
   return geo;
 }
 
@@ -221,7 +224,7 @@ export async function prepareCrystalGoldMaps(): Promise<void> {
   mat.roughnessMap = roughnessMap;
   // Texture carries the gold; keep tint near-white so instance colors stay subtle.
   mat.color.set(0xffffff);
-  mat.roughness = 0.28;
+  mat.roughness = 0.38;
   mat.metalness = 1;
   mat.envMapIntensity = 3.2;
   mat.needsUpdate = true;
@@ -239,7 +242,7 @@ function getMaterial(
       mat = new THREE.MeshStandardMaterial({
         color: 0xffe29b,
         metalness: 1,
-        roughness: 0.22,
+        roughness: 0.38,
         envMapIntensity: 3.4,
         emissive: p.emissive,
         emissiveIntensity: glow,
@@ -340,9 +343,10 @@ interface CrystalInstance {
   // stable per-crystal randoms (all 0..1)
   offAz: number; // azimuth of the offset from the cluster anchor
   offFrac: number; // offset radius, as a fraction of the cluster footprint
-  heightBase: number; // kind-specific height, as a multiple of crystalSize
+  heightBase: number; // kind-specific size, as a multiple of crystalSize
   jitterRnd: number; // feeds the sizeJitter slider
-  widthRnd: number; // width relative to height
+  widthRnd: number; // X squash relative to size
+  depthRnd: number; // Z squash relative to size
   tiltScale: number; // kind-specific lean multiplier
   leanRnd: number; // lean magnitude
   leanAz: number; // lean azimuth (radians)
@@ -552,6 +556,7 @@ class CrystalStroke implements StrokeInstance {
         heightBase,
         jitterRnd: rnd(),
         widthRnd: rnd(),
+        depthRnd: rnd(),
         tiltScale: tiltScale * (placement === "embedded" ? 0.55 : 1),
         leanRnd: rnd(),
         leanAz: rnd() * Math.PI * 2,
@@ -570,28 +575,35 @@ class CrystalStroke implements StrokeInstance {
       });
     };
 
-    // Dominant point — similar sizes, nestled close to the anchor (ore chunk, not a tower).
-    add("main", -1, 0.04 * rnd(), 0.92 + rnd() * 0.16, 0.35, 0);
-    // Shard slots — tight supporting ring, culled live by the shards slider.
+    // Dominant nugget — often medium, occasionally a clearly larger ore chunk.
+    add(
+      "main",
+      -1,
+      0.04 * rnd(),
+      0.7 + Math.pow(rnd(), 0.55) * 1.1, // ~0.7–1.8, skewed toward bigger
+      0.3,
+      0,
+    );
+    // Shards — many small grains, a few mid/large pebbles (power curve).
     for (let k = 0; k < MAX_SHARDS; k++) {
       add(
         "shard",
         k,
-        0.08 + rnd() * 0.28,
-        0.45 + rnd() * 0.25,
-        0.7,
+        0.08 + rnd() * 0.32,
+        0.1 + Math.pow(rnd(), 1.7) * 0.85, // ~0.1–0.95, mostly small
+        0.55,
         0.05 + rnd() * 0.1,
       );
     }
-    // Rubble — micro chips at the base so clusters read embedded in the stone.
-    const rubble = 3 + Math.floor(rnd() * 3);
+    // Rubble — dense micro flecks for the fine end of the size mix.
+    const rubble = 5 + Math.floor(rnd() * 4);
     for (let k = 0; k < rubble; k++) {
       add(
         "rubble",
         -1,
-        0.12 + rnd() * 0.35,
-        0.08 + rnd() * 0.08,
-        0.9,
+        0.1 + rnd() * 0.4,
+        0.025 + rnd() * 0.07, // ~0.025–0.095
+        0.7,
         0.08 + rnd() * 0.1,
       );
     }
@@ -630,12 +642,14 @@ class CrystalStroke implements StrokeInstance {
         // crystals every time instead of reshuffling.
         inst.isClear = inst.clearRnd < s.clearMix;
 
-        // Size (height + independent width), through the jitter slider.
+        // Size: near-isotropic nugget. sizeJitter at max spans ~0.2×–2.0×.
         const jitterMul =
-          1 - s.sizeJitter * 0.5 + inst.jitterRnd * s.sizeJitter;
-        const h = inst.heightBase * s.crystalSize * jitterMul;
-        const w = h * (0.8 + inst.widthRnd * 0.45);
-        inst.scale.set(w, h, w);
+          1 - s.sizeJitter * 0.8 + inst.jitterRnd * s.sizeJitter * 1.8;
+        const size = inst.heightBase * s.crystalSize * jitterMul;
+        const sx = size * (0.7 + inst.widthRnd * 0.55);
+        const sy = size * (0.65 + inst.jitterRnd * 0.45);
+        const sz = size * (0.7 + inst.depthRnd * 0.55);
+        inst.scale.set(sx, sy, sz);
 
         // Lean direction: surface normal tipped around a stable azimuth.
         const lean =
@@ -660,7 +674,7 @@ class CrystalStroke implements StrokeInstance {
             inst.t2,
             Math.sin(inst.offAz) * inst.offFrac * footprint,
           )
-          .addScaledVector(inst.n, -0.28 * h * inst.sinkMul);
+          .addScaledVector(inst.n, -0.28 * sy * inst.sinkMul);
 
         if (s.palette === "Citrine") {
           // Material already carries gold reflectance; instance color only varies brightness.

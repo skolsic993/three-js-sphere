@@ -96,7 +96,7 @@ export async function loadRockTextures(
   const loader = new THREE.TextureLoader();
   const [rawMap, normalMap, displacementMap, roughnessSrc, goldStrip] =
     await Promise.all([
-      loader.loadAsync(`${TEX_BASE}/dark_rock_diff_2k.webp`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_nor_gl_2k.jpg`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_rough_2k.jpg`),
