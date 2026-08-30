@@ -97,7 +97,7 @@ export async function loadRockTextures(
   const [rawMap, normalMap, displacementMap, roughnessSrc, goldStrip] =
     await Promise.all([
       loader.loadAsync(`${TEX_BASE}/dark_rock.webp`),
-      loader.loadAsync(`${TEX_BASE}/dark_rock_nor_gl_2k.jpg`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock_nor.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_rough_2k.jpg`),
       loadGoldStrip(),
@@ -462,9 +462,10 @@ export function createRockMaterial(
     metalnessMap: textures.metalnessMap,
     metalness: 1, // scratched-gold flecks from metalnessMap catch studio lights
     aoMap: textures.aoMap,
-    aoMapIntensity: 1.15,
+    aoMapIntensity: 1.35,
     clearcoat: 0,
-    envMapIntensity: 0.4,
+    // Low IBL so the shadow side stays charcoal; gold crystals keep their own envMapIntensity.
+    envMapIntensity: 0.12,
     specularIntensity: 0.45,
   });
 }

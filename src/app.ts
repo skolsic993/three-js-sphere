@@ -274,7 +274,8 @@ export class App {
    * No floor or sky mesh: the canvas stays fully transparent for compositing.
    */
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0xc4a882, 0.22);
+    // Low hemi + dark dirt ground so the shadow side isn't washed by sandy bounce.
+    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0x3a2e22, 0.08);
 
     const key = new THREE.SpotLight(0xfff2d8, 70, 0, Math.PI / 3.8, 0.45, 1.4);
     key.position.set(4.2, 7.2, 3.2);
@@ -287,23 +288,24 @@ export class App {
     key.shadow.normalBias = 0.02;
     key.shadow.radius = 4;
 
-    const fill = new THREE.DirectionalLight(0xc5d8f0, 0.55);
+    const fill = new THREE.DirectionalLight(0xc5d8f0, 0.18);
     fill.position.set(-3.5, 4, 3.5);
 
-    const back = new THREE.DirectionalLight(0xd0e4ff, 0.7);
+    // Thin rim only — enough shape on the back, not a second key.
+    const back = new THREE.DirectionalLight(0xd0e4ff, 0.32);
     back.position.set(-2.5, 4, -5);
-    const kick = new THREE.DirectionalLight(0xffe0b0, 0.65);
+    const kick = new THREE.DirectionalLight(0xffe0b0, 0.28);
     kick.position.set(5, 2, -2.5);
     const goldKick = new THREE.DirectionalLight(0xffe2a8, 4.2);
     goldKick.position.set(3, 8, 2);
 
     this.backLights = [
-      { light: back, base: 0.7 },
-      { light: kick, base: 0.65 },
+      { light: back, base: 0.32 },
+      { light: kick, base: 0.28 },
     ];
 
     // Soft bounce from below — kept low so the underside stays near-black.
-    const under = new THREE.PointLight(0xe8c898, 0.12, 7, 1.6);
+    const under = new THREE.PointLight(0xe8c898, 0.05, 7, 1.6);
     under.position.set(0, GROUND_Y + 0.35, 0);
 
     this.scene.add(hemi, key, key.target, fill, back, kick, goldKick, under);
