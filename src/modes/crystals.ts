@@ -299,8 +299,6 @@ class CrystalStroke implements StrokeInstance {
         mat,
         Math.max(list.length, 1),
       );
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
       mesh.frustumCulled = false; // grows over time; cheap enough to always draw
       for (let i = 0; i < list.length; i++) mesh.setMatrixAt(i, _zero);
       mesh.count = list.length;

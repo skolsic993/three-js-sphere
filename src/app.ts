@@ -126,8 +126,6 @@ export class App {
     renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = this.settings.exposure;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(renderer.domElement);
     this.renderer = renderer;
 
@@ -238,13 +236,6 @@ export class App {
     const key = new THREE.SpotLight(0xfff2d8, 70, 0, Math.PI / 3.8, 0.45, 1.4);
     key.position.set(4.2, 7.2, 3.2);
     key.target.position.set(0, 0, 0);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far = 24;
-    key.shadow.bias = -0.0004;
-    key.shadow.normalBias = 0.02;
-    key.shadow.radius = 4;
 
     const fill = new THREE.DirectionalLight(0xc5d8f0, 0.05);
     fill.position.set(-3.5, 4, 3.5);
@@ -297,8 +288,6 @@ export class App {
     const mat = createRockMaterial(textures);
 
     this.rock = new THREE.Mesh(geo, mat);
-    this.rock.castShadow = true;
-    this.rock.receiveShadow = true;
 
     const flecks = createGoldFlecks(geo, { veinCount: 10, seed: 0x601d });
     this.mainRock.add(this.rock, flecks, this.paintRoot);
@@ -428,8 +417,6 @@ export class App {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(...spec.position);
       mesh.rotation.set(...spec.rotation);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
       mesh.raycast = () => {}; // never a paint target
       this.floatRoot.add(mesh);
       this.registerRockFloat(mesh, Math.floor(spec.seed * 1000));
