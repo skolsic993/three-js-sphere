@@ -4,8 +4,7 @@ import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { indexForRaycasts } from "./bvh";
 import { SurfacePainter } from "./surfacePainter";
-import type { PaintMode, StrokeInstance, SurfaceSample } from "./modes/mode";
-import { mulberry32 } from "./modes/mode";
+import type { StrokeInstance, SurfaceSample } from "./modes/mode";
 import {
   createCoverageCrystalStroke,
   crystalMode,
@@ -14,17 +13,6 @@ import {
   setCrystalGlow,
   type CrystalSettings,
 } from "./modes/crystals";
-import {
-  defaultFissureSettings,
-  fissureMode,
-  type FissureSettings,
-} from "./modes/fissures";
-import {
-  auroraMode,
-  defaultAuroraSettings,
-  type AuroraSettings,
-} from "./modes/aurora";
-import { defaultReefSettings, reefMode, type ReefSettings } from "./modes/reef";
 import {
   createRockGeometry,
   createRockMaterial,
@@ -35,12 +23,6 @@ import { createGoldFlecks } from "./goldFlecks";
 import { sampleRockCoverageVeins } from "./crystalCoverage";
 import { buildGui } from "./ui";
 
-export type ModeName =
-  | "Crystals"
-  | "Molten fissures"
-  | "Aurora silk"
-  | "Bioluminescent reef";
-
 const GROUND_Y = -2.05; // the floor the rock floats above
 
 /** Scenery rocks around the canvas — not paint targets. */
@@ -50,20 +32,15 @@ interface CompanionSpec {
   detail: number;
   position: [number, number, number];
   rotation: [number, number, number];
-  /** How many crystal clusters to seed on this rock. */
-  crystalClusters: number;
-  flecks: number;
 }
 
 interface Stroke {
   samples: SurfaceSample[];
   index: number; // stable per-stroke id; combined with the global seed to vary each stroke
-  mode: ModeName; // which painting mode authored it (strokes rebuild through their own mode)
 }
 
-/** Everything the GUI edits. Mode-specific settings live in their own sub-objects. */
+/** Everything the GUI edits. */
 export interface AppSettings {
-  mode: ModeName;
   drawMode: boolean;
   seed: number;
   exposure: number;
@@ -75,7 +52,6 @@ export interface AppSettings {
 
 export class App {
   readonly settings: AppSettings = {
-    mode: "Crystals",
     drawMode: true,
     seed: 1,
     exposure: 1.1,
@@ -86,31 +62,6 @@ export class App {
   };
 
   readonly crystal: CrystalSettings = { ...defaultCrystalSettings };
-  readonly fissure: FissureSettings = { ...defaultFissureSettings };
-  readonly aurora: AuroraSettings = { ...defaultAuroraSettings };
-  readonly reef: ReefSettings = { ...defaultReefSettings };
-
-  /** Registry of painting modes — new modes plug in here. */
-  private modes: Record<ModeName, PaintMode<unknown>> = {
-    Crystals: crystalMode as PaintMode<unknown>,
-    "Molten fissures": fissureMode as PaintMode<unknown>,
-    "Aurora silk": auroraMode as PaintMode<unknown>,
-    "Bioluminescent reef": reefMode as PaintMode<unknown>,
-  };
-
-  /** Snapshot of the settings object a given mode consumes. */
-  private settingsFor(mode: ModeName): unknown {
-    switch (mode) {
-      case "Crystals":
-        return { ...this.crystal };
-      case "Molten fissures":
-        return { ...this.fissure };
-      case "Aurora silk":
-        return { ...this.aurora };
-      case "Bioluminescent reef":
-        return { ...this.reef };
-    }
-  }
 
   private renderer!: THREE.WebGPURenderer;
   private post!: THREE.RenderPipeline;
@@ -131,8 +82,6 @@ export class App {
   private live: StrokeInstance[] = [];
   private strokeCounter = 0;
 
-  /** Initial crystals on companion rocks — updated each frame, ignored by undo/clear. */
-  private sceneryStrokes: StrokeInstance[] = [];
   /**
    * Random surface fill on the main rock from `crystal.surfaceCoverage`.
    * One stroke per vein so seams grow independently; ignored by undo/clear.
@@ -145,8 +94,6 @@ export class App {
   private tiltTarget = new THREE.Vector2(0, 0);
 
   private lastTime = 0;
-  private hovering = false;
-  private toastTimer = 0;
   private regrowPending: { mode: "instant" | "animate" } | null = null;
   private lastRegrowAt = 0;
   private regrowCost = 0;
@@ -172,8 +119,8 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 7;
-    this.controls.maxDistance = 7;
+    this.controls.minDistance = 9;
+    this.controls.maxDistance = 9;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
@@ -194,9 +141,6 @@ export class App {
     this.painter.onStroke = (samples) => this.addStroke(samples);
     this.painter.onActiveChange = (active) => {
       this.controls.enabled = !active;
-    };
-    this.painter.onHoverChange = (over) => {
-      this.hovering = over;
     };
 
     buildGui(this);
@@ -386,7 +330,7 @@ export class App {
         clusterDensity: 16,
       },
     );
-    // Same parenting as companion scenery crystals — rock-local = sample-local.
+    // Same parenting as companion scenery — rock-local = sample-local.
     this.rock.add(stroke.group);
     this.coverageStrokes.push(stroke);
     if (!animate) stroke.finishGrowth();
@@ -414,8 +358,6 @@ export class App {
         detail: 4,
         position: [0.25, 1.55, 1.75],
         rotation: [0.35, 1.1, -0.2],
-        crystalClusters: 0,
-        flecks: 0,
       },
       {
         seed: 22.7,
@@ -423,8 +365,6 @@ export class App {
         detail: 4,
         position: [0.35, 1.45, -1.7],
         rotation: [-0.4, 0.6, 0.5],
-        crystalClusters: 0,
-        flecks: 0,
       },
       {
         seed: 33.1,
@@ -432,8 +372,6 @@ export class App {
         detail: 4,
         position: [0.45, 0.1, -2.15],
         rotation: [0.6, -0.8, 0.15],
-        crystalClusters: 0,
-        flecks: 0,
       },
       {
         seed: 88.2,
@@ -441,8 +379,6 @@ export class App {
         detail: 4,
         position: [0.3, -1.5, -1.55],
         rotation: [0.25, -0.5, 0.8],
-        crystalClusters: 0,
-        flecks: 0,
       },
       {
         seed: 91.6,
@@ -450,8 +386,6 @@ export class App {
         detail: 4,
         position: [0.2, -1.9, 0.15],
         rotation: [-0.7, 1.0, -0.3],
-        crystalClusters: 0,
-        flecks: 0,
       },
       {
         seed: 44.9,
@@ -459,19 +393,8 @@ export class App {
         detail: 4,
         position: [-0.15, -1.55, 1.6],
         rotation: [0.9, 0.3, -0.5],
-        crystalClusters: 0,
-        flecks: 0,
       },
     ];
-
-    const scenerySettings: CrystalSettings = {
-      ...defaultCrystalSettings,
-      crystalSize: 0.05,
-      clusterDensity: 8,
-      shards: 5,
-      spread: 1.8,
-      glow: 0,
-    };
 
     for (const spec of companions) {
       const geo = createRockGeometry(textures.displacementMap, {
@@ -487,35 +410,6 @@ export class App {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.raycast = () => {}; // never a paint target
-
-      if (spec.flecks > 0) {
-        mesh.add(
-          createGoldFlecks(geo, {
-            veinCount: spec.flecks,
-            seed: Math.floor(spec.seed * 1000),
-          }),
-        );
-      }
-
-      if (spec.crystalClusters > 0) {
-        const samples = sampleRockSurface(
-          geo,
-          spec.crystalClusters,
-          Math.floor(spec.seed * 7919),
-        );
-        const stroke = crystalMode.createStroke(
-          samples,
-          Math.floor(spec.seed * 9973),
-          {
-            ...scenerySettings,
-            crystalSize: scenerySettings.crystalSize * (0.7 + spec.scale * 0.5),
-          },
-        );
-        stroke.finishGrowth();
-        mesh.add(stroke.group);
-        this.sceneryStrokes.push(stroke);
-      }
-
       this.floatRoot.add(mesh);
     }
   }
@@ -545,7 +439,6 @@ export class App {
     const stroke: Stroke = {
       samples,
       index: this.strokeCounter++,
-      mode: this.settings.mode,
     };
     this.strokes.push(stroke);
     this.buildStroke(stroke, true);
@@ -553,11 +446,9 @@ export class App {
 
   private buildStroke(stroke: Stroke, animate: boolean): void {
     const seed = this.effectiveSeed(stroke.index);
-    const instance = this.modes[stroke.mode].createStroke(
-      stroke.samples,
-      seed,
-      this.settingsFor(stroke.mode),
-    );
+    const instance = crystalMode.createStroke(stroke.samples, seed, {
+      ...this.crystal,
+    });
     this.paintRoot.add(instance.group);
     this.live.push(instance);
     if (!animate) instance.finishGrowth();
@@ -600,27 +491,16 @@ export class App {
   // ---------- live (no-rebuild) setting paths ----------
 
   /**
-   * Push a mode's current settings into its live strokes IN PLACE — matrices, colors and
-   * shader uniforms update on the existing objects, nothing is recreated. Falls back to a
-   * rebuild only for stroke types that can't re-derive themselves.
+   * Push current crystal settings into live strokes IN PLACE — matrices and colors update
+   * on the existing objects, nothing is recreated.
    */
-  updateModeSettings(mode: ModeName): void {
-    let needRebuild = false;
-    for (let i = 0; i < this.live.length; i++) {
-      if (this.strokes[i].mode !== mode) continue;
-      const s = this.live[i];
-      if (s.applySettings) s.applySettings(this.settingsFor(mode));
-      else needRebuild = true;
-    }
+  updateCrystalSettings(): void {
+    const settings = { ...this.crystal };
+    for (const s of this.live) s.applySettings?.(settings);
     // Keep the random fill in sync with crystal look, but density stays max so
     // surfaceCoverage remains the only fill-amount control for those strokes.
-    if (mode === "Crystals") {
-      const coverageSettings = { ...this.crystal, clusterDensity: 16 };
-      for (const s of this.coverageStrokes) {
-        s.applySettings?.(coverageSettings);
-      }
-    }
-    if (needRebuild) this.scheduleRegrow("instant");
+    const coverageSettings = { ...this.crystal, clusterDensity: 16 };
+    for (const s of this.coverageStrokes) s.applySettings?.(coverageSettings);
   }
 
   /** Reseed painted strokes and the random surface fill together. */
@@ -660,7 +540,7 @@ export class App {
     this.bloomNode.threshold.value = v;
   }
 
-  // ---------- modes ----------
+  // ---------- paint / orbit ----------
 
   toggleMode(): void {
     this.settings.drawMode = !this.settings.drawMode;
@@ -673,8 +553,6 @@ export class App {
     this.controls.enableRotate = !draw;
     document.body.classList.toggle("draw", draw);
     document.body.classList.toggle("orbit", !draw);
-
-    if (!draw) this.hovering = false;
   }
 
   // ---------- frame loop ----------
@@ -713,7 +591,6 @@ export class App {
     this.controls.update();
     this.painter.update(dt);
     for (const s of this.live) s.update(dt, tSec);
-    for (const s of this.sceneryStrokes) s.update(dt, tSec);
     for (const s of this.coverageStrokes) s.update(dt, tSec);
 
     // All rocks share floatRoot — ease toward the mouse tilt (no idle spin).
@@ -732,42 +609,4 @@ export class App {
 
     this.post.render();
   }
-}
-
-/**
- * Pick a few outward-facing surface points on a rock mesh to seed scenery crystals.
- * Prefer upper hemisphere so clusters read against the sky instead of hiding under the rock.
- */
-function sampleRockSurface(
-  geo: THREE.BufferGeometry,
-  count: number,
-  seed: number,
-): SurfaceSample[] {
-  geo.computeVertexNormals();
-  const pos = geo.getAttribute("position") as THREE.BufferAttribute;
-  const nrm = geo.getAttribute("normal") as THREE.BufferAttribute;
-  const rnd = mulberry32(seed);
-  const candidates: number[] = [];
-  for (let i = 0; i < pos.count; i++) {
-    if (nrm.getY(i) > 0.15) candidates.push(i);
-  }
-  const pool =
-    candidates.length > 0 ? candidates : [...Array(pos.count).keys()];
-  const samples: SurfaceSample[] = [];
-  for (let c = 0; c < count; c++) {
-    const i = pool[Math.floor(rnd() * pool.length)]!;
-    const local = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
-    const localNormal = new THREE.Vector3(
-      nrm.getX(i),
-      nrm.getY(i),
-      nrm.getZ(i),
-    ).normalize();
-    samples.push({
-      position: local.clone(),
-      normal: localNormal.clone(),
-      local,
-      localNormal,
-    });
-  }
-  return samples;
 }
