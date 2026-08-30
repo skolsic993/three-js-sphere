@@ -26,6 +26,6 @@ app.start().catch((err: unknown) => {
   el.className = "fatal";
   el.textContent =
     `Failed to start: ${formatStartError(err)}. ` +
-    "If this mentions WebGPU/WebGL2, try a recent Chrome, Edge or Firefox.";
+    "If this mentions WebGL, try a recent Chrome, Edge or Firefox.";
   document.body.appendChild(el);
 });

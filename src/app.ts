@@ -1,6 +1,4 @@
-import * as THREE from "three/webgpu";
-import { float, pass, screenUV, smoothstep, vec2, vec4 } from "three/tsl";
-import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { indexForRaycasts } from "./bvh";
 import { SurfacePainter } from "./surfacePainter";
@@ -26,8 +24,6 @@ import {
 import { createGoldFlecks } from "./goldFlecks";
 import { sampleRockCoverageVeins } from "./crystalCoverage";
 import { buildGui } from "./ui";
-
-const GROUND_Y = -2.05; // the floor the rock floats above
 
 /** Scenery rocks around the canvas — not paint targets. */
 interface CompanionSpec {
@@ -62,8 +58,6 @@ export interface AppSettings {
   exposure: number;
   envIntensity: number;
   backlight: number; // scales the kickers that stream light through the crystals
-  bloomStrength: number;
-  bloomThreshold: number;
 }
 
 export class App {
@@ -73,25 +67,23 @@ export class App {
     exposure: 1.1,
     envIntensity: 0.9,
     backlight: 1,
-    bloomStrength: 0.4,
-    bloomThreshold: 0.75,
   };
 
   readonly crystal: CrystalSettings = { ...defaultCrystalSettings };
 
-  private renderer!: THREE.WebGPURenderer;
-  private post!: THREE.RenderPipeline;
-  private bloomNode!: ReturnType<typeof bloom>;
+  private renderer!: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
   private controls!: OrbitControls;
   private painter!: SurfacePainter;
 
-  /** The floating canvas: main rock + companions + paint — tilts together with the mouse. */
+  /** Main rock + companions + paint — shared bob root (no mouse tilt). */
   private floatRoot = new THREE.Group();
   /** Main specimen only (rock + flecks + paint) — set its initial pose here. */
   private mainRock = new THREE.Group();
   private rock!: THREE.Mesh;
+  /** Shared across main + companions — one Physical draw state, shared maps. */
+  private rockMaterial!: THREE.MeshPhysicalMaterial;
   private paintRoot = new THREE.Group(); // strokes parent here (child of mainRock)
 
   private strokes: Stroke[] = [];
@@ -103,13 +95,10 @@ export class App {
    * One stroke per vein so seams grow independently; ignored by undo/clear.
    */
   private coverageStrokes: StrokeInstance[] = [];
-  /** The backlight/kicker pair, scaled together by the Backlight slider. */
+  /** Rear fill light(s), scaled together by the Backlight slider. */
   private backLights: { light: THREE.DirectionalLight; base: number }[] = [];
 
-  /** Mouse-driven tilt: target from pointer position, smoothed onto floatRoot each frame. */
-  private tiltTarget = new THREE.Vector2(0, 0);
-
-  /** Independent subtle bob for main + each companion (tilt stays on floatRoot). */
+  /** Independent subtle bob for main + each companion. */
   private floatingRocks: RockFloat[] = [];
 
   private lastTime = 0;
@@ -120,9 +109,10 @@ export class App {
   constructor(private container: HTMLElement) {}
 
   async start(): Promise<void> {
-    const renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true });
-    await renderer.init();
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // Coarse pointers (phones) stay at 1×; desktop caps at 1.5× to cut fill rate.
+    const dprCap = matchMedia("(pointer: coarse)").matches ? 1 : 1.5;
+    renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap));
     renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = this.settings.exposure;
@@ -146,7 +136,6 @@ export class App {
     await prepareCrystalGoldMaps();
     setCrystalGlow(this.crystal.glow);
     await this.setupCanvasRock();
-    this.setupPost();
 
     this.painter = new SurfacePainter(
       renderer.domElement,
@@ -168,22 +157,11 @@ export class App {
       if (e.key.toLowerCase() === "d") this.toggleMode();
     });
 
-    window.addEventListener("pointermove", this.onPointerMove);
     window.addEventListener("resize", this.onResize);
     this.onResize();
 
     renderer.setAnimationLoop((t) => this.tick(t));
   }
-
-  /** Map pointer to a gentle tilt target — rocks follow the mouse; idle when it stops. */
-  private onPointerMove = (e: PointerEvent): void => {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-    const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-    // Horizontal mouse → yaw; vertical → pitch — kept small so the set barely leans.
-    this.tiltTarget.set(ny * 0.06, nx * 0.01);
-  };
 
   // ---------- environment: a sunny outdoor sky captured into a PMREM env map ----------
 
@@ -227,67 +205,43 @@ export class App {
 
   /**
    * Outdoor sun key + soft sky fill — warm daylight on the charcoal rock.
+   * Four lights only (hemi + spot + fill + gold key); no shadow maps.
    * No floor or sky mesh: the canvas stays fully transparent for compositing.
    */
   private setupLights(): void {
-    // Whisper hemi + dark dirt ground — silhouette readable, shadow side stays charcoal.
-    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0x3a2e22, 0.035);
+    // Whisper hemi + dark dirt ground — silhouette readable, far side stays charcoal.
+    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0x3a2e22, 0.05);
 
     const key = new THREE.SpotLight(0xfff2d8, 70, 0, Math.PI / 3.8, 0.45, 1.4);
     key.position.set(4.2, 7.2, 3.2);
     key.target.position.set(0, 0, 0);
 
-    const fill = new THREE.DirectionalLight(0xc5d8f0, 0.05);
-    fill.position.set(-3.5, 4, 3.5);
+    // Single cool fill (replaces former fill + topRight + under).
+    const fill = new THREE.DirectionalLight(0xc5d8f0, 0.14);
+    fill.position.set(-3.5, 4.5, 2.5);
 
-    // Soft fill for the upper-right silhouette — just enough to read facets.
-    const topRight = new THREE.DirectionalLight(0xe8f0ff, 0.12);
-    topRight.position.set(4.5, 5.5, 1.5);
-
-    // Bare rim — far side falls into shadow; Backlight slider can bring kickers back.
-    const back = new THREE.DirectionalLight(0xd0e4ff, 0.08);
+    // Rear rim — Backlight slider scales this for crystal transmission.
+    const back = new THREE.DirectionalLight(0xd0e4ff, 0.12);
     back.position.set(-2.5, 4, -5);
-    const kick = new THREE.DirectionalLight(0xffe0b0, 0.06);
-    kick.position.set(5, 2, -2.5);
+
     const goldKick = new THREE.DirectionalLight(0xffe2a8, 4.2);
     goldKick.position.set(3, 8, 2);
 
-    this.backLights = [
-      { light: back, base: 0.08 },
-      { light: kick, base: 0.06 },
-    ];
+    this.backLights = [{ light: back, base: 0.12 }];
 
-    // Soft bounce from below — kept low so the underside stays near-black.
-    const under = new THREE.PointLight(0xe8c898, 0.02, 7, 1.6);
-    under.position.set(0, GROUND_Y + 0.35, 0);
-
-    this.scene.add(
-      hemi,
-      key,
-      key.target,
-      fill,
-      topRight,
-      back,
-      kick,
-      goldKick,
-      under,
-    );
+    this.scene.add(hemi, key, key.target, fill, back, goldKick);
   }
 
   /** The canvas itself: a jagged dark rock with Poly Haven PBR maps — quiet stage for crystals.
    *  Displacement is baked into the mesh so paint raycasts match the visible surface. */
   private async setupCanvasRock(): Promise<void> {
     const textures = await loadRockTextures(
-      (
-        this.renderer.backend as {
-          capabilities?: { getMaxAnisotropy?: () => number };
-        }
-      ).capabilities?.getMaxAnisotropy?.() ?? 16,
+      this.renderer.capabilities.getMaxAnisotropy(),
     );
     const geo = createRockGeometry(textures.displacementMap);
-    const mat = createRockMaterial(textures);
+    this.rockMaterial = createRockMaterial(textures);
 
-    this.rock = new THREE.Mesh(geo, mat);
+    this.rock = new THREE.Mesh(geo, this.rockMaterial);
 
     const flecks = createGoldFlecks(geo, { veinCount: 10, seed: 0x601d });
     this.mainRock.add(this.rock, flecks, this.paintRoot);
@@ -412,9 +366,7 @@ export class App {
         scale: spec.scale,
         seed: spec.seed,
       });
-      // Share maps; each mesh needs its own material instance for safe disposal later.
-      const mat = createRockMaterial(textures);
-      const mesh = new THREE.Mesh(geo, mat);
+      const mesh = new THREE.Mesh(geo, this.rockMaterial);
       mesh.position.set(...spec.position);
       mesh.rotation.set(...spec.rotation);
       mesh.raycast = () => {}; // never a paint target
@@ -444,25 +396,6 @@ export class App {
       phaseY: rng() * Math.PI * 2,
       phaseXZ: rng() * Math.PI * 2,
     });
-  }
-
-  /** Post: MSAA scene pass + bloom + a gentle lens vignette, tone-mapped on output. */
-  private setupPost(): void {
-    const scenePass = pass(this.scene, this.camera, { samples: 4 });
-    const color = scenePass.getTextureNode();
-    this.bloomNode = bloom(
-      color,
-      this.settings.bloomStrength,
-      0.6,
-      this.settings.bloomThreshold,
-    );
-    const vignette = float(1).sub(
-      smoothstep(0.55, 0.98, screenUV.distance(vec2(0.5, 0.5))).mul(0.18),
-    );
-    // Keep scene alpha so empty pixels stay transparent through bloom/vignette.
-    const lit = color.add(this.bloomNode);
-    this.post = new THREE.PostProcessing(this.renderer);
-    this.post.outputNode = vec4(lit.rgb.mul(vignette), color.a);
   }
 
   // ---------- strokes ----------
@@ -562,16 +495,6 @@ export class App {
     for (const { light, base } of this.backLights) light.intensity = base * v;
   }
 
-  setBloomStrength(v: number): void {
-    this.settings.bloomStrength = v;
-    this.bloomNode.strength.value = v;
-  }
-
-  setBloomThreshold(v: number): void {
-    this.settings.bloomThreshold = v;
-    this.bloomNode.threshold.value = v;
-  }
-
   // ---------- paint / orbit ----------
 
   toggleMode(): void {
@@ -625,20 +548,6 @@ export class App {
     for (const s of this.live) s.update(dt, tSec);
     for (const s of this.coverageStrokes) s.update(dt, tSec);
 
-    // All rocks share floatRoot — ease toward the mouse tilt (no idle spin).
-    this.floatRoot.rotation.x = THREE.MathUtils.damp(
-      this.floatRoot.rotation.x,
-      this.tiltTarget.x,
-      5,
-      dt,
-    );
-    this.floatRoot.rotation.y = THREE.MathUtils.damp(
-      this.floatRoot.rotation.y,
-      this.tiltTarget.y,
-      5,
-      dt,
-    );
-
     // Per-rock idle float — independent phase/freq so they don't bob in sync.
     for (const f of this.floatingRocks) {
       f.object.position.x =
@@ -649,6 +558,6 @@ export class App {
         f.base.z + Math.cos(tSec * f.freqXZ + f.phaseXZ * 1.3) * f.ampXZ;
     }
 
-    this.post.render();
+    this.renderer.render(this.scene, this.camera);
   }
 }

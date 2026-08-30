@@ -20,6 +20,46 @@ export interface RockTextures {
 const TEX_BASE = "/textures";
 /** Keep in sync with UV sampling in createRockGeometry. */
 const TEX_REPEAT = 3;
+/** Cap GPU map resolution (normal + composited albedo) to cut VRAM / bandwidth. */
+const GPU_TEX_MAX = 2048;
+
+/**
+ * Downsample a loaded texture's image onto a canvas when either edge exceeds `maxSize`.
+ * Disposes the source texture when a new one is created.
+ */
+function downsampleTexture(
+  tex: THREE.Texture,
+  maxSize: number,
+): THREE.Texture {
+  const img = tex.image as HTMLImageElement | ImageBitmap | undefined;
+  if (!img || !("width" in img)) return tex;
+  const w = img.width;
+  const h = img.height;
+  if (w <= maxSize && h <= maxSize) return tex;
+
+  const scale = maxSize / Math.max(w, h);
+  const nw = Math.max(1, Math.round(w * scale));
+  const nh = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = nw;
+  canvas.height = nh;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return tex;
+  ctx.drawImage(img, 0, 0, nw, nh);
+
+  const out = new THREE.CanvasTexture(canvas);
+  out.colorSpace = tex.colorSpace;
+  out.wrapS = tex.wrapS;
+  out.wrapT = tex.wrapT;
+  out.magFilter = tex.magFilter;
+  out.minFilter = tex.minFilter;
+  out.generateMipmaps = tex.generateMipmaps;
+  out.anisotropy = tex.anisotropy;
+  out.repeat.copy(tex.repeat);
+  out.needsUpdate = true;
+  tex.dispose();
+  return out;
+}
 
 /** Hermite smoothstep for soft AO falloff from valleys to peaks. */
 function smoothstep(edge0: number, edge1: number, x: number): number {
@@ -95,7 +135,7 @@ export async function loadRockTextures(
   maxAnisotropy = 16,
 ): Promise<RockTextures> {
   const loader = new THREE.TextureLoader();
-  const [rawMap, normalMap, displacementMap, roughnessSrc, goldStrip] =
+  const [rawMap, rawNormal, displacementMap, roughnessSrc, goldStrip] =
     await Promise.all([
       loader.loadAsync(`${TEX_BASE}/dark_rock.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_nor.webp`),
@@ -103,6 +143,9 @@ export async function loadRockTextures(
       loader.loadAsync(`${TEX_BASE}/dark_rock_rough.webp`),
       loadGoldStrip(),
     ]);
+
+  // Normal is the largest GPU-only map (~11MB source); cap before upload.
+  const normalMap = downsampleTexture(rawNormal, GPU_TEX_MAX);
 
   const { map, metalnessMap, roughnessMap } = compositeRockAlbedoWithGold(
     rawMap,

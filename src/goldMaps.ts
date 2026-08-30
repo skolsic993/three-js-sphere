@@ -120,7 +120,7 @@ function sampleRockRoughness(
  * Sources larger than MAX_COMPOSITE_SIZE (e.g. 8K authoring maps) are downsampled
  * before CPU compositing so getImageData stays browser-safe.
  */
-const MAX_COMPOSITE_SIZE = 4096;
+const MAX_COMPOSITE_SIZE = 2048;
 
 export function compositeRockAlbedoWithGold(
   source: THREE.Texture,

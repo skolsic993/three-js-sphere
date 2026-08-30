@@ -69,14 +69,6 @@ export function buildGui(app: App): GUI {
     .add(s, "backlight", 0, 2.5)
     .name("Backlight")
     .onChange((v: number) => app.setBacklight(v));
-  fLook
-    .add(s, "bloomStrength", 0, 1.5)
-    .name("Bloom")
-    .onChange((v: number) => app.setBloomStrength(v));
-  fLook
-    .add(s, "bloomThreshold", 0.2, 1.5)
-    .name("Bloom threshold")
-    .onChange((v: number) => app.setBloomThreshold(v));
   // Reseeding regenerates painted strokes + the random surface fill.
   fLook
     .add(s, "seed", 0, 999, 1)

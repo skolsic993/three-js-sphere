@@ -34,7 +34,7 @@ export interface CrystalSettings {
   spread: number; // cluster footprint, as a multiple of crystalSize
   tilt: number; // 0..1 — how far crystals lean away from the surface normal
   sizeJitter: number; // 0..1 — per-crystal size variation
-  glow: number; // emissive intensity (feeds the bloom pass)
+  glow: number; // emissive intensity (subtle without a bloom pass)
   growthSpeed: number; // world units of stroke length grown per second
 }
 
@@ -245,6 +245,11 @@ const _dir = new THREE.Vector3();
 const _align = new THREE.Quaternion();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
+const _box = new THREE.Box3();
+const _boundSphere = new THREE.Sphere();
+
+/** Max rubble flecks per cluster — kept low to shrink instance buffers. */
+const MAX_RUBBLE = 3;
 
 /** Elastic-ish pop: overshoots ~8% then settles, like a crystal snapping into being. */
 function easeOutBack(t: number): number {
@@ -299,7 +304,8 @@ class CrystalStroke implements StrokeInstance {
         mat,
         Math.max(list.length, 1),
       );
-      mesh.frustumCulled = false; // grows over time; cheap enough to always draw
+      // Bounds refreshed after pose so off-screen strokes can be culled.
+      mesh.frustumCulled = true;
       for (let i = 0; i < list.length; i++) mesh.setMatrixAt(i, _zero);
       mesh.count = list.length;
       mesh.instanceMatrix.needsUpdate = true;
@@ -437,7 +443,7 @@ class CrystalStroke implements StrokeInstance {
       0.3,
       0,
     );
-    // Shards — many small grains, a few mid/large pebbles (power curve).
+    // Shards — slots at MAX so the shards slider can raise count live without rebuild.
     for (let k = 0; k < MAX_SHARDS; k++) {
       add(
         "shard",
@@ -448,8 +454,8 @@ class CrystalStroke implements StrokeInstance {
         0.05 + rnd() * 0.1,
       );
     }
-    // Rubble — dense micro flecks for the fine end of the size mix.
-    const rubble = 5 + Math.floor(rnd() * 4);
+    // Rubble — few micro flecks (not live-culled; keep the buffer small).
+    const rubble = 1 + Math.floor(rnd() * MAX_RUBBLE);
     for (let k = 0; k < rubble; k++) {
       add(
         "rubble",
@@ -536,6 +542,7 @@ class CrystalStroke implements StrokeInstance {
     // Re-pose every born instance with the new derived values.
     this.done = false;
     this.pose(true);
+    this.refreshBounds();
   }
 
   // ----- StrokeInstance -----
@@ -549,6 +556,7 @@ class CrystalStroke implements StrokeInstance {
   finishGrowth(): void {
     this.grown = this.total + GROW_WINDOW + 1;
     this.pose(true);
+    this.refreshBounds();
   }
 
   /**
@@ -589,7 +597,36 @@ class CrystalStroke implements StrokeInstance {
       }
       if (dirty) mesh.instanceMatrix.needsUpdate = true;
     }
-    if (allDone) this.done = true;
+    if (allDone) {
+      this.done = true;
+      this.refreshBounds();
+    }
+  }
+
+  /**
+   * Conservative local-space sphere from visible instance positions so frustum
+   * culling works (default geometry sphere ignores instance offsets).
+   */
+  private refreshBounds(): void {
+    const margin =
+      this.settings.crystalSize * this.settings.spread * 2 +
+      this.settings.crystalSize * 2;
+    for (let v = 0; v < VARIANTS; v++) {
+      const mesh = this.meshes[v];
+      const list = this.byVariant[v];
+      _box.makeEmpty();
+      for (const inst of list) {
+        if (!inst.visible) continue;
+        _box.expandByPoint(inst.pos);
+      }
+      if (_box.isEmpty()) {
+        mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
+      } else {
+        _box.getBoundingSphere(_boundSphere);
+        _boundSphere.radius += margin;
+        mesh.boundingSphere = _boundSphere.clone();
+      }
+    }
   }
 
   dispose(): void {

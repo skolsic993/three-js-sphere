@@ -13,9 +13,9 @@ const MAX_BEADS = 4000;
  *
  * Visual feedback:
  *  - a "brush" ring hovering on the surface under the cursor (where crystals would seed),
- *  - a glowing violet trail tracing the stroke while dragging. A plain Line's width is
- *    ignored by WebGPU, so the trail is an InstancedMesh of overlapping beads at each
- *    sample: one stable geometry, only instance matrices update.
+ *  - a glowing violet trail tracing the stroke while dragging. Line width is ignored by
+ *    WebGL, so the trail is an InstancedMesh of overlapping beads at each sample: one
+ *    stable geometry, only instance matrices update.
  */
 export class SurfacePainter {
   enabled = true;
@@ -42,6 +42,10 @@ export class SurfacePainter {
   private invAnchor = new THREE.Matrix4();
   private zeroMat = new THREE.Matrix4().scale(new THREE.Vector3(0, 0, 0));
   private beadHigh = 0; // highest bead index written since the last clear
+
+  /** Hover pick coalesced to one raycast per animation frame. */
+  private pendingHover: PointerEvent | null = null;
+  private hoverRaf = 0;
 
   constructor(
     private dom: HTMLElement,
@@ -72,7 +76,7 @@ export class SurfacePainter {
       glow({ opacity: 1 }),
       MAX_BEADS,
     );
-    this.beads.frustumCulled = false;
+    this.beads.frustumCulled = true;
     this.beads.renderOrder = 11;
     // Collapse every instance to zero scale up front, so any instance we don't explicitly
     // place stays invisible (never a stray dot) regardless of draw count.
@@ -150,18 +154,26 @@ export class SurfacePainter {
       this.updatePreview();
       return;
     }
-    // Not drawing: show the brush where the cursor hovers the surface.
+    // Hover brush: one BVH raycast per frame, not per raw pointermove.
     if (!this.enabled) return;
-    const hit = this.pick(e);
-    if (hit) {
-      this.brush.visible = true;
-      this.brush.position
-        .copy(hit.position)
-        .addScaledVector(hit.normal, STROKE_RADIUS * 0.6);
-      this.brush.quaternion.setFromUnitVectors(this.zAxis, hit.normal);
-    } else {
-      this.brush.visible = false;
-    }
+    this.pendingHover = e;
+    if (this.hoverRaf !== 0) return;
+    this.hoverRaf = requestAnimationFrame(() => {
+      this.hoverRaf = 0;
+      const ev = this.pendingHover;
+      this.pendingHover = null;
+      if (!ev || this.active || !this.enabled) return;
+      const hit = this.pick(ev);
+      if (hit) {
+        this.brush.visible = true;
+        this.brush.position
+          .copy(hit.position)
+          .addScaledVector(hit.normal, STROKE_RADIUS * 0.6);
+        this.brush.quaternion.setFromUnitVectors(this.zAxis, hit.normal);
+      } else {
+        this.brush.visible = false;
+      }
+    });
   };
 
   private onUp = (): void => {

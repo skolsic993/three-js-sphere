@@ -275,6 +275,6 @@ export function createGoldFlecks(
   });
 
   const points = new THREE.Points(geo, mat);
-  points.frustumCulled = false;
+  geo.computeBoundingSphere();
   return points;
 }
