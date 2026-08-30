@@ -1,10 +1,8 @@
 import * as THREE from 'three';
 
 /**
- * The mode system: Geometry Painter is a collection of painting modes (crystals today;
- * coral, circuitry, feathers, ... tomorrow). Every mode consumes the same surface strokes
- * and returns a living StrokeInstance the app animates and manages uniformly, so adding a
- * mode never touches the painting/orbit/undo plumbing.
+ * Shared stroke contract for the citrine painting mode. SurfacePainter produces samples;
+ * CrystalStroke implements StrokeInstance so the app can grow, animate, and undo uniformly.
  */
 
 export interface SurfaceSample {

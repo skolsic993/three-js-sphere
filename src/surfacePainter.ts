@@ -1,6 +1,6 @@
-import * as THREE from 'three';
-import { firstHitOnly } from './bvh';
-import type { SurfaceSample } from './modes/mode';
+import * as THREE from "three";
+import { firstHitOnly } from "./bvh";
+import type { SurfaceSample } from "./modes/mode";
 
 const STROKE_COLOR = 0xc9a4ff;
 const STROKE_RADIUS = 0.028;
@@ -22,14 +22,11 @@ export class SurfacePainter {
   minDist = 0.03;
   onStroke: ((samples: SurfaceSample[]) => void) | null = null;
   onActiveChange: ((active: boolean) => void) | null = null;
-  /** Fired when the surface is hovered (true) or the cursor leaves it (false), in paint mode. */
-  onHoverChange: ((over: boolean) => void) | null = null;
 
   private raycaster = firstHitOnly(new THREE.Raycaster()); // BVH: smooth picking
   private pointer = new THREE.Vector2();
   private samples: SurfaceSample[] = [];
   private active = false;
-  private hovering = false;
   private pulse = 0;
 
   private group = new THREE.Group();
@@ -58,7 +55,9 @@ export class SurfacePainter {
     scene.add(this.group);
 
     // Unlit, always-on-top so the trail can never be buried by the model or dimmed by lights.
-    const glow = (extra: THREE.MeshBasicMaterialParameters = {}): THREE.MeshBasicMaterial =>
+    const glow = (
+      extra: THREE.MeshBasicMaterialParameters = {},
+    ): THREE.MeshBasicMaterial =>
       new THREE.MeshBasicMaterial({
         color: STROKE_COLOR,
         transparent: true,
@@ -81,7 +80,10 @@ export class SurfacePainter {
     this.beads.instanceMatrix.needsUpdate = true;
     this.beads.count = 0;
 
-    this.startMarker = new THREE.Mesh(new THREE.SphereGeometry(STROKE_RADIUS * 1.8, 16, 12), glow());
+    this.startMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(STROKE_RADIUS * 1.8, 16, 12),
+      glow(),
+    );
     this.startMarker.visible = false;
     this.startMarker.renderOrder = 12;
 
@@ -91,17 +93,20 @@ export class SurfacePainter {
       new THREE.RingGeometry(0.055, 0.078, 40),
       glow({ opacity: 0.9, side: THREE.DoubleSide }),
     );
-    this.brushDot = new THREE.Mesh(new THREE.CircleGeometry(0.015, 20), glow({ opacity: 0.95, side: THREE.DoubleSide }));
+    this.brushDot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.015, 20),
+      glow({ opacity: 0.95, side: THREE.DoubleSide }),
+    );
     this.brush.add(this.brushRing, this.brushDot);
     this.brush.visible = false;
     this.brush.renderOrder = 12;
 
     this.group.add(this.beads, this.startMarker, this.brush);
 
-    dom.addEventListener('pointerdown', this.onDown);
-    window.addEventListener('pointermove', this.onMove);
-    window.addEventListener('pointerup', this.onUp);
-    dom.addEventListener('pointerleave', this.onLeave);
+    dom.addEventListener("pointerdown", this.onDown);
+    window.addEventListener("pointermove", this.onMove);
+    window.addEventListener("pointerup", this.onUp);
+    dom.addEventListener("pointerleave", this.onLeave);
   }
 
   /** Called each frame so the brush can gently pulse. */
@@ -110,16 +115,14 @@ export class SurfacePainter {
     if (this.brush.visible) {
       const s = 1 + Math.sin(this.pulse * 4) * 0.08;
       this.brushRing.scale.setScalar(s);
-      (this.brushRing.material as THREE.MeshBasicMaterial).opacity = 0.65 + Math.sin(this.pulse * 4) * 0.2;
+      (this.brushRing.material as THREE.MeshBasicMaterial).opacity =
+        0.65 + Math.sin(this.pulse * 4) * 0.2;
     }
   }
 
   setEnabled(on: boolean): void {
     this.enabled = on;
-    if (!on) {
-      this.setHovering(false);
-      this.brush.visible = false;
-    }
+    if (!on) this.brush.visible = false;
   }
 
   private onDown = (e: PointerEvent): void => {
@@ -130,7 +133,9 @@ export class SurfacePainter {
     this.samples = [hit];
     this.brush.visible = false;
     this.startMarker.visible = true;
-    this.startMarker.position.copy(hit.position).addScaledVector(hit.normal, STROKE_RADIUS);
+    this.startMarker.position
+      .copy(hit.position)
+      .addScaledVector(hit.normal, STROKE_RADIUS);
     this.updatePreview();
     this.onActiveChange?.(true);
   };
@@ -149,13 +154,13 @@ export class SurfacePainter {
     if (!this.enabled) return;
     const hit = this.pick(e);
     if (hit) {
-      this.setHovering(true);
       this.brush.visible = true;
-      this.brush.position.copy(hit.position).addScaledVector(hit.normal, STROKE_RADIUS * 0.6);
+      this.brush.position
+        .copy(hit.position)
+        .addScaledVector(hit.normal, STROKE_RADIUS * 0.6);
       this.brush.quaternion.setFromUnitVectors(this.zAxis, hit.normal);
     } else {
       this.brush.visible = false;
-      this.setHovering(false);
     }
   };
 
@@ -172,14 +177,7 @@ export class SurfacePainter {
   private onLeave = (): void => {
     if (this.active) return;
     this.brush.visible = false;
-    this.setHovering(false);
   };
-
-  private setHovering(over: boolean): void {
-    if (over === this.hovering) return;
-    this.hovering = over;
-    this.onHoverChange?.(over);
-  }
 
   private pick(e: PointerEvent): SurfaceSample | null {
     const rect = this.dom.getBoundingClientRect();
@@ -192,7 +190,9 @@ export class SurfacePainter {
     const hits = this.raycaster.intersectObjects(this.getTargets(), true);
     for (const h of hits) {
       if (!h.face) continue;
-      const normal = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+      const normal = h.face.normal
+        .clone()
+        .transformDirection(h.object.matrixWorld);
       // Convert to anchor space NOW: the canvas floats, so each sample must be pinned
       // relative to the surface at the instant it was picked.
       this.anchor.updateWorldMatrix(true, false);
@@ -213,7 +213,9 @@ export class SurfacePainter {
     const n = Math.min(this.samples.length, MAX_BEADS);
     for (let i = 0; i < n; i++) {
       const s = this.samples[i];
-      const p = s.position.clone().addScaledVector(s.normal, STROKE_RADIUS * 0.8);
+      const p = s.position
+        .clone()
+        .addScaledVector(s.normal, STROKE_RADIUS * 0.8);
       this.tmpMat.compose(p, this.tmpQuat, this.tmpScale);
       this.beads.setMatrixAt(i, this.tmpMat);
     }
@@ -225,7 +227,8 @@ export class SurfacePainter {
   private clearPreview(): void {
     // Zero out (not just hide) every instance this stroke touched, so the buffer returns to
     // the same all-zero state the very first draw started from.
-    for (let i = 0; i < this.beadHigh; i++) this.beads.setMatrixAt(i, this.zeroMat);
+    for (let i = 0; i < this.beadHigh; i++)
+      this.beads.setMatrixAt(i, this.zeroMat);
     this.beadHigh = 0;
     this.beads.count = 0;
     this.beads.instanceMatrix.needsUpdate = true;

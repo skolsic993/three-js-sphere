@@ -18,7 +18,7 @@ export interface CrystalCoverageOpts {
   upperHemisphereOnly?: boolean;
 }
 
-export function estimateSurfaceArea(geo: THREE.BufferGeometry): number {
+function estimateSurfaceArea(geo: THREE.BufferGeometry): number {
   geo.computeBoundingSphere();
   const r = geo.boundingSphere?.radius ?? 1;
   return 4 * Math.PI * r * r;
@@ -30,7 +30,7 @@ export function estimateSurfaceArea(geo: THREE.BufferGeometry): number {
  * Cap is applied to the *100%* budget first, then multiplied by coverage —
  * so 0.6 is ~60% as many crystals as 1.0 (not the same count hitting a shared max).
  */
-export function clusterCountForCoverage(
+function clusterCountForCoverage(
   surfaceArea: number,
   coverage: number,
   crystalSize: number,
@@ -351,11 +351,4 @@ export function sampleRockCoverageVeins(
   }
 
   return veins;
-}
-
-export function sampleRockSurfaceByCoverage(
-  geo: THREE.BufferGeometry,
-  opts: CrystalCoverageOpts,
-): SurfaceSample[] {
-  return sampleRockCoverageVeins(geo, opts).flat();
 }

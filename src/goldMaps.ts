@@ -6,14 +6,14 @@ import * as THREE from "three";
  * and facets share one metal look.
  */
 
-export const GOLD_COLLAGE_URL = "/textures/gold_texture.webp";
+const GOLD_COLLAGE_URL = "/textures/gold_texture.webp";
 
 /** Strip 4 of 6 (0-based) — bright yellow-gold leaf. */
 const GOLD_STRIP_INDEX = 3;
 const STRIP_COUNT = 6;
 
 /** UV tile rate when sampling into rock flecks — keeps micro-scratches sharp at 1024. */
-export const GOLD_TILE = 6;
+const GOLD_TILE = 6;
 
 /** Gold roughness in 0–255 (≈0.16–0.22). */
 const GOLD_ROUGH = 48;
@@ -39,7 +39,7 @@ function canvasTex(
 }
 
 /** Crop one vertical swatch from the 6-strip collage into pixel data. */
-export function extractGoldStrip(
+function extractGoldStrip(
   img: HTMLImageElement | ImageBitmap,
   stripIndex = GOLD_STRIP_INDEX,
 ): GoldStrip {
@@ -73,7 +73,7 @@ export async function loadGoldStrip(): Promise<GoldStrip> {
 }
 
 /** Wrap-sampling scratched metal RGB from the strip. */
-export function sampleGoldStrip(
+function sampleGoldStrip(
   strip: GoldStrip,
   u: number,
   v: number,
@@ -90,7 +90,7 @@ export function sampleGoldStrip(
  * Hard ore mask — stricter than the soft painted flecks so edges don't bleed
  * into charcoal.
  */
-export function isWarmOre(r: number, g: number, b: number): boolean {
+function isWarmOre(r: number, g: number, b: number): boolean {
   return r > g && g >= b && r - b > 48 && r > 72 && r / Math.max(g, 1) > 1.08;
 }
 

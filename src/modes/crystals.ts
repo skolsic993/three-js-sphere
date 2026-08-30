@@ -9,29 +9,19 @@ import {
 } from "./mode";
 
 /**
- * Crystal painting mode. Each stroke seeds clusters of rounded gold-nugget chunks along the
- * painted path: one dominant nugget per cluster surrounded by smaller shards and rubble,
- * lightly sunk into the surface. Citrine reads as scratched metallic ore; other palettes
- * stay transmissive glass on the same mesh, growing in with an elastic pop as the growth
- * front sweeps along the stroke.
+ * Citrine crystal painting mode. Each stroke seeds clusters of rounded gold-nugget
+ * chunks along the painted path: one dominant nugget per cluster surrounded by smaller
+ * shards and rubble, lightly sunk into the surface. Reads as scratched metallic ore,
+ * growing in with an elastic pop as the growth front sweeps along the stroke.
  *
- * Every slider is TRULY live: a stroke stores each crystal's generative parameters (anchor,
- * tangent frame, stable randoms) rather than baked matrices, and instances are allocated at
- * the slider maxima. Changing size/spread/tilt/jitter/palette recomposes matrices and colors
- * in place; changing density/shards zero-scales culled instances — nothing is ever
- * disposed or recreated while you drag.
+ * Every slider is TRULY live: a stroke stores each crystal's generative parameters
+ * (anchor, tangent frame, stable randoms) rather than baked matrices, and instances are
+ * allocated at the slider maxima. Changing size/spread/tilt/jitter recomposes matrices
+ * and colors in place; changing density/shards zero-scales culled instances — nothing
+ * is ever disposed or recreated while you drag.
  */
 
-export type CrystalPaletteName =
-  | "Amethyst"
-  | "Ice"
-  | "Emerald"
-  | "Citrine"
-  | "Rose"
-  | "Prism";
-
 export interface CrystalSettings {
-  palette: CrystalPaletteName;
   /**
    * 0..1 — fraction of the rock surface to pre-fill with crystal *veins*
    * on load (and when this / seed changes). 0.65 ≈ 65% as path-like seams
@@ -44,13 +34,11 @@ export interface CrystalSettings {
   spread: number; // cluster footprint, as a multiple of crystalSize
   tilt: number; // 0..1 — how far crystals lean away from the surface normal
   sizeJitter: number; // 0..1 — per-crystal size variation
-  clearMix: number; // 0..1 — fraction of crystals that are clear refractive quartz
   glow: number; // emissive intensity (feeds the bloom pass)
   growthSpeed: number; // world units of stroke length grown per second
 }
 
 export const defaultCrystalSettings: CrystalSettings = {
-  palette: "Citrine",
   surfaceCoverage: 0.05,
   clusterDensity: 16,
   crystalSize: 0.035,
@@ -58,7 +46,6 @@ export const defaultCrystalSettings: CrystalSettings = {
   spread: 1.6,
   tilt: 0.4,
   sizeJitter: 1,
-  clearMix: 0,
   glow: 0,
   growthSpeed: 1.4,
 };
@@ -68,54 +55,7 @@ export const defaultCrystalSettings: CrystalSettings = {
 export const MAX_DENSITY = 16;
 export const MAX_SHARDS = 16;
 
-// ---------- palettes ----------
-
-interface Palette {
-  base: THREE.Color; // per-instance tint base
-  attenuation: THREE.Color; // color light turns while passing through (the "body" color)
-  emissive: THREE.Color; // faint inner light, amplified by the glow slider + bloom
-  hueJitter: number; // per-crystal hue variation (0..1 of the full wheel)
-}
-
-const PALETTES: Record<CrystalPaletteName, Palette> = {
-  Amethyst: {
-    base: new THREE.Color(0xa878e8),
-    attenuation: new THREE.Color(0x7a2fd6),
-    emissive: new THREE.Color(0x8a5cff),
-    hueJitter: 0.045,
-  },
-  Ice: {
-    base: new THREE.Color(0xcfe8ff),
-    attenuation: new THREE.Color(0x5aa6e8),
-    emissive: new THREE.Color(0x7fc4ff),
-    hueJitter: 0.03,
-  },
-  Emerald: {
-    base: new THREE.Color(0x74e8a0),
-    attenuation: new THREE.Color(0x0f9c4a),
-    emissive: new THREE.Color(0x3cf58a),
-    hueJitter: 0.04,
-  },
-  // Gold ore look: opaque metal, not glass. Reflectance ~0xffe29b (measured gold → sRGB).
-  Citrine: {
-    base: new THREE.Color(0xffe29b),
-    attenuation: new THREE.Color(0xc9a227),
-    emissive: new THREE.Color(0xffc050),
-    hueJitter: 0.02,
-  },
-  Rose: {
-    base: new THREE.Color(0xf5a8c8),
-    attenuation: new THREE.Color(0xd6488a),
-    emissive: new THREE.Color(0xff7ab8),
-    hueJitter: 0.03,
-  },
-  Prism: {
-    base: new THREE.Color(0xe8ecf5),
-    attenuation: new THREE.Color(0x9aa8c4),
-    emissive: new THREE.Color(0xbcc8ff),
-    hueJitter: 1.0, // full rainbow spread per crystal
-  },
-};
+const EMISSIVE = new THREE.Color(0xffc050);
 
 // ---------- shared geometry variants ----------
 
@@ -197,9 +137,9 @@ function getVariantGeometries(): THREE.BufferGeometry[] {
   return variantGeos;
 }
 
-// ---------- shared materials (one per palette, so glow edits hit every stroke) ----------
+// ---------- shared material ----------
 
-const materials = new Map<CrystalPaletteName, THREE.MeshStandardMaterial>();
+let crystalMaterial: THREE.MeshStandardMaterial | null = null;
 
 /** Same scratched-gold leaf strip as rock ore flecks — solid metal for Citrine facets. */
 async function loadGoldMaps(): Promise<{
@@ -215,11 +155,27 @@ let goldMapsPromise: Promise<{
   roughnessMap: THREE.Texture;
 }> | null = null;
 
-/** Attach scratched-gold leaf maps to the Citrine (metallic) material. */
+function getCrystalMaterial(glow: number): THREE.MeshStandardMaterial {
+  if (!crystalMaterial) {
+    // Opaque metallic gold. Map applied via prepareCrystalGoldMaps.
+    crystalMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffe29b,
+      metalness: 1,
+      roughness: 0.38,
+      envMapIntensity: 3.4,
+      emissive: EMISSIVE,
+      emissiveIntensity: glow,
+    });
+  }
+  crystalMaterial.emissiveIntensity = glow;
+  return crystalMaterial;
+}
+
+/** Attach scratched-gold leaf maps to the citrine material. */
 export async function prepareCrystalGoldMaps(): Promise<void> {
   if (!goldMapsPromise) goldMapsPromise = loadGoldMaps();
   const { map, roughnessMap } = await goldMapsPromise;
-  const mat = getMaterial("Citrine", 0);
+  const mat = getCrystalMaterial(0);
   mat.map = map;
   mat.roughnessMap = roughnessMap;
   // Texture carries the gold; keep tint near-white so instance colors stay subtle.
@@ -230,92 +186,9 @@ export async function prepareCrystalGoldMaps(): Promise<void> {
   mat.needsUpdate = true;
 }
 
-function getMaterial(
-  name: CrystalPaletteName,
-  glow: number,
-): THREE.MeshStandardMaterial {
-  let mat = materials.get(name);
-  if (!mat) {
-    const p = PALETTES[name];
-    if (name === "Citrine") {
-      // Opaque metallic gold (not transmissive quartz). Map applied via prepareCrystalGoldMaps.
-      mat = new THREE.MeshStandardMaterial({
-        color: 0xffe29b,
-        metalness: 1,
-        roughness: 0.38,
-        envMapIntensity: 3.4,
-        emissive: p.emissive,
-        emissiveIntensity: glow,
-      });
-    } else {
-      // Glass quartz: palette tint lives in per-instance colors + colored absorption —
-      // base color stays white so the tint isn't multiplied into itself.
-      mat = new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
-        metalness: 0,
-        roughness: 0.05,
-        // Partially transmissive: full transmission over the dark rock reads as flat
-        // black glass. Keeping ~35% diffuse gives facet-by-facet shading (the milky,
-        // translucent read of a real amethyst cluster) while the glass depth remains.
-        transmission: 0.7,
-        ior: 1.55,
-        thickness: 0.4,
-        attenuationColor: p.attenuation,
-        attenuationDistance: 0.5,
-        dispersion: 0.3, // chromatic fringing inside the glass — the "gem fire"
-        iridescence: 0.4,
-        iridescenceIOR: 1.3,
-        clearcoat: 0.5,
-        clearcoatRoughness: 0.12,
-        specularIntensity: 1,
-        emissive: p.emissive,
-        emissiveIntensity: glow,
-        envMapIntensity: 1.6,
-      });
-    }
-    materials.set(name, mat);
-  }
-  mat.emissiveIntensity = glow;
-  return mat;
-}
-
-/**
- * Clear quartz: the transparent, refractive companion material (one shared instance).
- * It lives on highlights — full transmission, near-zero roughness, strong dispersion —
- * so it reads as glass fire next to the tinted, absorbing crystals.
- */
-let clearMaterial: THREE.MeshPhysicalMaterial | null = null;
-
-function getClearMaterial(glow: number): THREE.MeshPhysicalMaterial {
-  if (!clearMaterial) {
-    clearMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      metalness: 0,
-      roughness: 0.02,
-      transmission: 1,
-      ior: 1.55,
-      thickness: 0.5,
-      attenuationColor: 0xdfe8ff, // the faintest cool cast, like real rock crystal
-      attenuationDistance: 1.6,
-      dispersion: 0.4,
-      iridescence: 0.15,
-      iridescenceIOR: 1.3,
-      clearcoat: 0.6,
-      clearcoatRoughness: 0.08,
-      specularIntensity: 1.2,
-      emissive: 0xcfd8ff,
-      emissiveIntensity: glow * 0.35,
-      envMapIntensity: 2.0,
-    });
-  }
-  clearMaterial.emissiveIntensity = glow * 0.35;
-  return clearMaterial;
-}
-
-/** Live glow slider: retint every material in place — no rebuild. */
+/** Live glow slider: retint the shared material in place — no rebuild. */
 export function setCrystalGlow(glow: number): void {
-  for (const mat of materials.values()) mat.emissiveIntensity = glow;
-  if (clearMaterial) clearMaterial.emissiveIntensity = glow * 0.35;
+  if (crystalMaterial) crystalMaterial.emissiveIntensity = glow;
 }
 
 // ---------- per-stroke instance ----------
@@ -354,12 +227,10 @@ interface CrystalInstance {
   hueRnd: number;
   satRnd: number;
   lightRnd: number;
-  clearRnd: number; // stable rank for the clearMix slider (below the mix → clear quartz)
   /** Scales how far the base is sunk along -normal (coverage embeds deeper). */
   sinkMul: number;
   // derived cache, rewritten by applySettings()
   visible: boolean;
-  isClear: boolean;
   pos: THREE.Vector3;
   quat: THREE.Quaternion;
   scale: THREE.Vector3;
@@ -373,9 +244,6 @@ const _dir = new THREE.Vector3();
 const _align = new THREE.Quaternion();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
-const _hsl = { h: 0, s: 0, l: 0 };
-const _white = new THREE.Color(0xffffff);
-const _clearTint = new THREE.Color();
 
 /** Elastic-ish pop: overshoots ~8% then settles, like a crystal snapping into being. */
 function easeOutBack(t: number): number {
@@ -396,11 +264,7 @@ function maxBirth(instances: CrystalInstance[]): number {
 class CrystalStroke implements StrokeInstance {
   readonly group = new THREE.Group();
 
-  /** Two mesh sets per variant: tinted palette crystals and clear refractive quartz.
-   *  Every instance owns a slot in BOTH; the clearMix slider decides which one is live
-   *  (the other stays zero-scaled) — so the mix is instant, nothing rebuilt. */
-  private tinted: THREE.InstancedMesh[] = [];
-  private clear: THREE.InstancedMesh[] = [];
+  private meshes: THREE.InstancedMesh[] = [];
   private byVariant: CrystalInstance[][];
   private settings: CrystalSettings;
   private grown = 0;
@@ -421,17 +285,13 @@ class CrystalStroke implements StrokeInstance {
         ? this.scatterPoints(samples, rnd)
         : this.scatter(samples, rnd, embedded ? "embedded" : "vein");
 
-    // Bucket instances per geometry variant → one tinted + one clear InstancedMesh each.
+    // Bucket instances per geometry variant → one InstancedMesh each.
     this.byVariant = Array.from({ length: VARIANTS }, () => []);
     for (const inst of instances) this.byVariant[inst.variant].push(inst);
 
     const geos = getVariantGeometries();
-    const tintedMat = getMaterial(settings.palette, settings.glow);
-    const clearMat = getClearMaterial(settings.glow);
-    const makeMesh = (
-      v: number,
-      mat: THREE.MeshStandardMaterial,
-    ): THREE.InstancedMesh => {
+    const mat = getCrystalMaterial(settings.glow);
+    for (let v = 0; v < VARIANTS; v++) {
       const list = this.byVariant[v];
       const mesh = new THREE.InstancedMesh(
         geos[v],
@@ -445,11 +305,7 @@ class CrystalStroke implements StrokeInstance {
       mesh.count = list.length;
       mesh.instanceMatrix.needsUpdate = true;
       this.group.add(mesh);
-      return mesh;
-    };
-    for (let v = 0; v < VARIANTS; v++) {
-      this.tinted.push(makeMesh(v, tintedMat));
-      this.clear.push(makeMesh(v, clearMat));
+      this.meshes.push(mesh);
     }
 
     // Loop — Math.max(...arr) stack-overflows at ~120k args (dense coverage).
@@ -564,10 +420,8 @@ class CrystalStroke implements StrokeInstance {
         hueRnd: rnd(),
         satRnd: rnd(),
         lightRnd: rnd(),
-        clearRnd: rnd(),
         sinkMul,
         visible: true,
-        isClear: false,
         pos: new THREE.Vector3(),
         quat: new THREE.Quaternion(),
         scale: new THREE.Vector3(1, 1, 1),
@@ -614,17 +468,13 @@ class CrystalStroke implements StrokeInstance {
   applySettings(settings: unknown): void {
     const s = settings as CrystalSettings;
     this.settings = { ...s };
-    const palette = PALETTES[s.palette];
-    const tintedMat = getMaterial(s.palette, s.glow);
-    const clearMat = getClearMaterial(s.glow);
+    const mat = getCrystalMaterial(s.glow);
     const footprint = s.crystalSize * s.spread;
     const densityFrac = s.clusterDensity / MAX_DENSITY;
 
     for (let v = 0; v < VARIANTS; v++) {
-      const tMesh = this.tinted[v];
-      const cMesh = this.clear[v];
-      if (tMesh.material !== tintedMat) tMesh.material = tintedMat;
-      if (cMesh.material !== clearMat) cMesh.material = clearMat;
+      const mesh = this.meshes[v];
+      if (mesh.material !== mat) mesh.material = mat;
 
       const list = this.byVariant[v];
       for (let i = 0; i < list.length; i++) {
@@ -637,10 +487,6 @@ class CrystalStroke implements StrokeInstance {
         inst.visible =
           inst.clusterRnd <= densityFrac &&
           (inst.kind !== "shard" || inst.shardIndex < shardCap);
-
-        // Clear-quartz mix: stable rank, so raising the slider converts the same
-        // crystals every time instead of reshuffling.
-        inst.isClear = inst.clearRnd < s.clearMix;
 
         // Size: near-isotropic nugget. sizeJitter at max spans ~0.2×–2.0×.
         const jitterMul =
@@ -676,31 +522,16 @@ class CrystalStroke implements StrokeInstance {
           )
           .addScaledVector(inst.n, -0.28 * sy * inst.sinkMul);
 
-        if (s.palette === "Citrine") {
-          // Material already carries gold reflectance; instance color only varies brightness.
-          const v = 0.88 + inst.lightRnd * 0.14;
-          inst.color.setRGB(
-            v,
-            v * (0.96 + inst.satRnd * 0.04),
-            v * (0.82 + inst.hueRnd * 0.1),
-          );
-        } else {
-          // Tint from the palette + this crystal's stable color randoms.
-          inst.color.copy(palette.base);
-          inst.color.getHSL(_hsl);
-          inst.color.setHSL(
-            (_hsl.h + (inst.hueRnd - 0.5) * palette.hueJitter + 1) % 1,
-            THREE.MathUtils.clamp(_hsl.s * (1.15 + inst.satRnd * 0.35), 0, 1),
-            THREE.MathUtils.clamp(_hsl.l * (0.8 + inst.lightRnd * 0.45), 0, 1),
-          );
-        }
-        tMesh.setColorAt(i, inst.color);
-        // Clear slot: near-white with the faintest palette memory, varied per crystal.
-        _clearTint.copy(inst.color).lerp(_white, 0.82 + inst.lightRnd * 0.12);
-        cMesh.setColorAt(i, _clearTint);
+        // Material already carries gold reflectance; instance color only varies brightness.
+        const brightness = 0.88 + inst.lightRnd * 0.14;
+        inst.color.setRGB(
+          brightness,
+          brightness * (0.96 + inst.satRnd * 0.04),
+          brightness * (0.82 + inst.hueRnd * 0.1),
+        );
+        mesh.setColorAt(i, inst.color);
       }
-      if (tMesh.instanceColor) tMesh.instanceColor.needsUpdate = true;
-      if (cMesh.instanceColor) cMesh.instanceColor.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
 
     // Re-pose every born instance with the new derived values.
@@ -723,33 +554,23 @@ class CrystalStroke implements StrokeInstance {
 
   /**
    * Recompose matrices for crystals inside the growth window; freeze once all are grown.
-   * `force` recomposes every instance (settings changed → even settled ones moved, and a
-   * crystal may have flipped between its tinted and clear slot).
+   * `force` recomposes every instance (settings changed → even settled ones moved).
    */
   private pose(force: boolean): void {
     let allDone = this.grown >= this.total + GROW_WINDOW + 0.3;
     for (let v = 0; v < VARIANTS; v++) {
       const list = this.byVariant[v];
-      const tMesh = this.tinted[v];
-      const cMesh = this.clear[v];
+      const mesh = this.meshes[v];
       let dirty = force;
       for (let i = 0; i < list.length; i++) {
         const inst = list[i];
-        const on = inst.isClear ? cMesh : tMesh;
-        const off = inst.isClear ? tMesh : cMesh;
         if (!inst.visible) {
-          if (force) {
-            on.setMatrixAt(i, _zero);
-            off.setMatrixAt(i, _zero);
-          }
+          if (force) mesh.setMatrixAt(i, _zero);
           continue;
         }
         const t = (this.grown - inst.birth) / GROW_WINDOW;
         if (t <= 0) {
-          if (force) {
-            on.setMatrixAt(i, _zero);
-            off.setMatrixAt(i, _zero);
-          }
+          if (force) mesh.setMatrixAt(i, _zero);
           allDone = false;
           continue; // still unborn — matrix stays zero
         }
@@ -762,16 +583,12 @@ class CrystalStroke implements StrokeInstance {
             inst.scale.z * k * (0.6 + 0.4 * k),
           );
           _m.compose(inst.pos, inst.quat, _s);
-          on.setMatrixAt(i, _m);
-          if (force) off.setMatrixAt(i, _zero); // it may have just switched buckets
+          mesh.setMatrixAt(i, _m);
           dirty = true;
           if (t < 1) allDone = false;
         }
       }
-      if (dirty) {
-        tMesh.instanceMatrix.needsUpdate = true;
-        cMesh.instanceMatrix.needsUpdate = true;
-      }
+      if (dirty) mesh.instanceMatrix.needsUpdate = true;
     }
     if (allDone) this.done = true;
   }
@@ -779,8 +596,7 @@ class CrystalStroke implements StrokeInstance {
   dispose(): void {
     this.group.removeFromParent();
     // Instanced buffers only; geometry + materials are shared across strokes.
-    for (const mesh of this.tinted) mesh.dispose();
-    for (const mesh of this.clear) mesh.dispose();
+    for (const mesh of this.meshes) mesh.dispose();
   }
 }
 
