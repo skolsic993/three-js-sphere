@@ -462,10 +462,10 @@ export function createRockMaterial(
     metalnessMap: textures.metalnessMap,
     metalness: 1, // scratched-gold flecks from metalnessMap catch studio lights
     aoMap: textures.aoMap,
-    aoMapIntensity: 1.35,
+    aoMapIntensity: 1.5,
     clearcoat: 0,
-    // Low IBL so the shadow side stays charcoal; gold crystals keep their own envMapIntensity.
-    envMapIntensity: 0.12,
-    specularIntensity: 0.45,
+    // Almost no IBL on charcoal; facets stay matte so fill/rim don't wash the far side.
+    envMapIntensity: 0.04,
+    specularIntensity: 0.2,
   });
 }

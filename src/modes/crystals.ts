@@ -51,7 +51,7 @@ export interface CrystalSettings {
 
 export const defaultCrystalSettings: CrystalSettings = {
   palette: "Citrine",
-  surfaceCoverage: 0.15,
+  surfaceCoverage: 0.05,
   clusterDensity: 16,
   crystalSize: 0.035,
   shards: 7,
