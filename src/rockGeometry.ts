@@ -2,8 +2,9 @@ import * as THREE from "three";
 import { compositeRockAlbedoWithGold, loadGoldStrip } from "./goldMaps";
 
 /**
- * Procedural charcoal ore chunk — organic, crumbly, matte.
- * Driven by domain-warped ridged noise + baked displacement (not gem facets).
+ * Procedural charcoal ore chunk — tall fractured teardrop with sharp cleavage
+ * edges and a deep front gouge. Ridged noise + baked displacement for crust;
+ * authored cuts and a cavity for the silhouette (not a gem cut).
  */
 
 export interface RockTextures {
@@ -174,9 +175,27 @@ function sampleDisplacement(
   return data[i]! / 255;
 }
 
+interface FractureCut {
+  nx: number;
+  ny: number;
+  nz: number;
+  d: number;
+}
+
+function pushCut(
+  cuts: FractureCut[],
+  nx: number,
+  ny: number,
+  nz: number,
+  d: number,
+): void {
+  const len = Math.hypot(nx, ny, nz) || 1;
+  cuts.push({ nx: nx / len, ny: ny / len, nz: nz / len, d });
+}
+
 /**
- * Large organic ore chunk: irregular silhouette, crumbly ridges, deep natural crevices.
- * Indexed mesh with smooth normals so PBR maps read as matte charcoal stone — not a gem cut.
+ * Tall fractured teardrop: bulky top, tapered tip, deep front gouge, hard cleavage.
+ * Smooth normals so PBR maps still read as matte charcoal — not a gem cut.
  */
 export function createRockGeometry(
   displacementMap: THREE.Texture,
@@ -208,82 +227,103 @@ export function createRockGeometry(
     canvas.height,
   );
 
-  // A few soft fracture bites — distance is noise-modulated so edges stay jagged, not planar.
-  const cuts: { nx: number; ny: number; nz: number; d: number }[] = [];
-  for (let c = 0; c < 6; c++) {
+  // Authored cleavage first so the silhouette isn't seed-luck; hashed extras for variety.
+  const cuts: FractureCut[] = [];
+  // Left flank — near-parallel vertical shears (stepped ridges).
+  pushCut(cuts, -1.0, 0.06, 0.16, 0.5);
+  pushCut(cuts, -0.96, 0.14, -0.1, 0.57);
+  pushCut(cuts, -0.9, -0.04, 0.32, 0.63);
+  // Front-lower face beside the gouge.
+  pushCut(cuts, 0.78, -0.38, 0.18, 0.46);
+  // Bottom tip shears — off-center ragged point (d low enough to actually bite the taper).
+  pushCut(cuts, 0.18, -1.0, 0.28, 0.42);
+  pushCut(cuts, -0.38, -0.88, -0.18, 0.48);
+  // Upper blunt peaks.
+  pushCut(cuts, 0.22, 1.0, 0.12, 0.82);
+  pushCut(cuts, -0.28, 0.92, -0.22, 0.84);
+  for (let c = 0; c < 3; c++) {
     const nx = hash3(c + seed, 1.1, 2.2) * 2 - 1;
     const ny = hash3(c + seed, 3.3, 4.4) * 2 - 1;
     const nz = hash3(c + seed, 5.5, 6.6) * 2 - 1;
-    const len = Math.hypot(nx, ny, nz) || 1;
-    cuts.push({
-      nx: nx / len,
-      ny: ny / len,
-      nz: nz / len,
-      d: 0.62 + hash3(c + seed, 7.7, 8.8) * 0.45,
-    });
+    pushCut(cuts, nx, ny, nz, 0.72 + hash3(c + seed, 7.7, 8.8) * 0.22);
   }
 
   const p = new THREE.Vector3();
   const dir = new THREE.Vector3();
+  const cavityRel = new THREE.Vector3();
 
   for (let i = 0; i < pos.count; i++) {
     p.fromBufferAttribute(pos, i);
 
-    // --- 1. Chunky asymmetric proportions (compact ore lump, not a spike cluster) ---
-    p.x *= 1.22;
-    p.y *= 1.05;
-    p.z *= 0.92;
-    const lean = 0.18;
-    const x1 = p.x + p.y * lean;
-    const y1 = p.y - p.x * 0.08;
+    // --- 1. Vertical teardrop: bulky upper half, narrow jagged tip ---
+    p.x *= 0.9;
+    p.y *= 1.52;
+    p.z *= 0.86;
+    const x1 = p.x + p.y * 0.07;
+    const y1 = p.y - p.x * 0.04;
     const z1 = p.z + p.x * 0.05;
-    // Mild one-sided mass so it feels like a broken specimen, not a sphere.
     const mass =
       1 +
-      0.12 * Math.max(0, x1 * 0.4 + y1 * 0.5) +
-      0.14 * fbm(x1 * 0.55 + seed, y1 * 0.55, z1 * 0.55, 3);
-    p.set(x1 * mass, y1 * mass, z1 * (0.95 + 0.08 * mass));
+      0.2 * Math.max(0, y1 * 0.42) +
+      0.1 * fbm(x1 * 0.55 + seed, y1 * 0.4, z1 * 0.55, 3);
+    p.set(x1 * mass, y1 * mass, z1 * (0.94 + 0.07 * mass));
 
     dir.copy(p);
     const plen = dir.length() || 1;
     dir.multiplyScalar(1 / plen);
 
-    // --- 2. Domain warp → organic folds instead of geometric cells ---
-    const wx = fbm(p.x * 0.9 + seed, p.y * 0.9, p.z * 0.9, 4) * 0.55;
-    const wy = fbm(p.x * 0.9 + 17, p.y * 0.9 + seed, p.z * 0.9, 4) * 0.55;
-    const wz = fbm(p.x * 0.9, p.y * 0.9 + 29, p.z * 0.9 + seed, 4) * 0.55;
+    // --- 2. Domain warp; ridged noise stretched vertically so folds run up/down ---
+    const wx = fbm(p.x * 0.9 + seed, p.y * 0.55, p.z * 0.9, 4) * 0.48;
+    const wy = fbm(p.x * 0.9 + 17, p.y * 0.55 + seed, p.z * 0.9, 4) * 0.32;
+    const wz = fbm(p.x * 0.9, p.y * 0.55 + 29, p.z * 0.9 + seed, 4) * 0.48;
     const qx = p.x + wx;
     const qy = p.y + wy;
     const qz = p.z + wz;
 
-    // Ridged macro shape: crumbly ridges + valleys (the reference silhouette).
-    const ridges = ridged(qx * 1.15 + seed, qy * 1.15, qz * 1.15, 5);
-    const broad = fbm(qx * 0.7 + seed * 2, qy * 0.7, qz * 0.7, 4);
-    const fine = fbm(qx * 2.8, qy * 2.8 + seed, qz * 2.8, 3);
-    const crevice = creviceMask(qx, qy, qz, 1.1, seed);
+    const ridges = ridged(qx * 1.38 + seed, qy * 0.62, qz * 1.38, 5);
+    const broad = fbm(qx * 0.65 + seed * 2, qy * 0.4, qz * 0.65, 4);
+    const fine = fbm(qx * 3.05, qy * 1.55 + seed, qz * 3.05, 3);
+    const crevice = creviceMask(qx, qy * 0.7, qz, 1.15, seed);
 
-    let r = 0.78 + ridges * 0.38 + broad * 0.16 + fine * 0.06 - crevice * 0.18;
+    let r = 0.72 + ridges * 0.42 + broad * 0.14 + fine * 0.08 - crevice * 0.16;
 
-    // Keep a solid core so thin spikes don't form.
-    r = Math.max(0.55, r);
+    // Wide at upper-mid, pinch toward the bottom tip; slight flatten at the peak.
+    const yN = dir.y;
+    const bottom = THREE.MathUtils.smootherstep(yN, -1, 0.08);
+    const topPinch = THREE.MathUtils.smootherstep(yN, 0.55, 1);
+    r *= THREE.MathUtils.lerp(0.4, 1.05, bottom) * (1 - 0.12 * topPinch);
+    r = Math.max(0.38, r);
 
     p.copy(dir).multiplyScalar(r);
 
-    // --- 3. Soft fracture bites with jagged (noise-broken) lips ---
+    // --- 3. Front/lower ellipsoid gouge — deep bowl, noisy rim so it isn't a circle ---
+    cavityRel.set((p.x - 0.48) / 0.56, (p.y + 0.2) / 0.46, (p.z - 0.05) / 0.5);
+    const cavityDist = cavityRel.length();
+    const rimJitter =
+      fbm(p.x * 5.2 + seed, p.y * 5.2, p.z * 5.2, 3) * 0.14 +
+      ridged(p.x * 3.4, p.y * 3.4 + seed, p.z * 3.4, 2) * 0.08;
+    const cavityOuter = 1.08 + rimJitter;
+    if (cavityDist < cavityOuter) {
+      const t = 1 - cavityDist / cavityOuter;
+      const bowl = t * t * t;
+      const depth = bowl * 0.82;
+      p.x -= depth;
+      p.y += cavityRel.y * depth * 0.14;
+      p.z += cavityRel.z * depth * 0.2;
+    }
+
+    // --- 4. Hard planar clips with noise-broken lips (cleaved faces, not feathered) ---
     for (const cut of cuts) {
       const side = p.x * cut.nx + p.y * cut.ny + p.z * cut.nz;
       const jagged =
         cut.d +
-        fbm(p.x * 3.2 + seed, p.y * 3.2, p.z * 3.2, 3) * 0.12 +
-        ridged(p.x * 2.4, p.y * 2.4 + seed, p.z * 2.4, 2) * 0.08;
+        fbm(p.x * 3.4 + seed, p.y * 2.2, p.z * 3.4, 3) * 0.1 +
+        ridged(p.x * 2.6, p.y * 1.6 + seed, p.z * 2.6, 2) * 0.07;
       if (side > jagged) {
         const excess = side - jagged;
-        // Feathered push — avoids clean planar faces.
-        const t = Math.min(1, excess / 0.4);
-        const soft = t * t * (3 - 2 * t);
-        p.x -= cut.nx * excess * soft;
-        p.y -= cut.ny * excess * soft;
-        p.z -= cut.nz * excess * soft;
+        p.x -= cut.nx * excess;
+        p.y -= cut.ny * excess;
+        p.z -= cut.nz * excess;
       }
     }
 
@@ -294,7 +334,7 @@ export function createRockGeometry(
     const outward = p.length() || 1;
     const relief =
       (h - 0.5) * 0.28 +
-      ridged(p.x * 4.5 + seed, p.y * 4.5, p.z * 4.5, 3) * 0.07 -
+      ridged(p.x * 4.5 + seed, p.y * 2.4, p.z * 4.5, 3) * 0.07 -
       crevice * 0.04;
     p.addScaledVector(p, relief / outward);
 

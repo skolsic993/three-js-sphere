@@ -192,7 +192,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 13;
+    this.controls.minDistance = 1;
     this.controls.maxDistance = 13;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -333,10 +333,6 @@ export class App {
   private async setupCanvasRock(): Promise<void> {
     const textures = await loadRockTextures();
     const geo = createRockGeometry(textures.displacementMap);
-    // Slightly elongate the specimen so it reads longer than the companions.
-    geo.scale(1.14, 1, 1);
-    geo.computeVertexNormals();
-    geo.computeBoundingSphere();
     const mat = createRockMaterial(textures);
 
     this.rock = new THREE.Mesh(geo, mat);
@@ -346,10 +342,9 @@ export class App {
     const flecks = createGoldFlecks(geo, { veinCount: 10, seed: 0x601d });
     this.mainRock.add(this.rock, flecks, this.paintRoot);
 
-    // Initial pose of the main stone — tweak these (radians for rotation).
-    // Companions stay put; mouse tilt still turns the whole floatRoot.
+    // Upright teardrop; gouge is on local +X, facing the camera at (+X, +Z).
     this.mainRock.position.set(0, 0, 0);
-    this.mainRock.rotation.set(1.5, 0.45, -0.08);
+    this.mainRock.rotation.set(1.28, 0.26, -0.06);
 
     this.floatRoot.add(this.mainRock);
     this.addCompanionRocks(textures);
