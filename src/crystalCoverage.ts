@@ -38,13 +38,13 @@ export function clusterCountForCoverage(
 ): number {
   const t = THREE.MathUtils.clamp(coverage, 0, 1);
   if (t <= 0) return 0;
-  // Visual patch ≈ main crystal width on the rock (~half the height).
-  const radius = Math.max(crystalSize * 0.42, 0.02);
+  // Visual patch ≈ main crystal width. Tight cell so coverage=1 reads as stacked ore.
+  const radius = Math.max(crystalSize * 0.32, 0.01);
   const footprint = Math.PI * radius * radius;
-  const MAX_AT_FULL = 2800;
+  const MAX_AT_FULL = 8500;
   const fullPack = Math.min(
     MAX_AT_FULL,
-    Math.max(1, Math.floor(surfaceArea / (footprint * 0.35))),
+    Math.max(1, Math.floor(surfaceArea / (footprint * 0.2))),
   );
   return Math.max(1, Math.round(t * fullPack));
 }
@@ -79,7 +79,7 @@ export function sampleRockCoverageVeins(
   const veinBudget = Math.max(1, Math.round(target * 0.3));
   const dotBudget = Math.max(1, target - veinBudget);
   // Spacing matches visual patch — tight enough that coverage=1 looks full.
-  const spacing = Math.max(opts.crystalSize * 0.48, 0.025);
+  const spacing = Math.max(opts.crystalSize * 0.3, 0.012);
   // Vein *count* also scales with coverage (not a flat 40–60 band).
   const veinCount = Math.max(1, Math.round(t * 55));
   const perVein = Math.max(3, Math.ceil(veinBudget / Math.max(1, veinCount)));
@@ -204,7 +204,7 @@ export function sampleRockCoverageVeins(
   };
 
   const sampleOne = (minD: number): SurfaceSample | null => {
-    for (let attempt = 0; attempt < 64; attempt++) {
+    for (let attempt = 0; attempt < 96; attempt++) {
       const tri = pickTri();
       const face = readTri(tri);
       if (!face.ok) continue;
@@ -314,16 +314,23 @@ export function sampleRockCoverageVeins(
 
   // --- dense dots (bulk of the coverage %) ---
   const dots: SurfaceSample[] = [];
-  const dotAttempts = Math.max(dotBudget * 40, 2000);
+  const dotAttempts = Math.max(dotBudget * 80, 4000);
   for (let i = 0; i < dotAttempts && dots.length < dotBudget; i++) {
-    const s = sampleOne(spacing * 0.72);
+    const s = sampleOne(spacing * 0.55);
     if (s) dots.push(s);
   }
-  // If min-distance blocked us, relax and finish the budget.
-  if (dots.length < dotBudget * 0.85) {
+  // If min-distance blocked us, relax and finish the budget so coverage=1 actually fills.
+  if (dots.length < dotBudget * 0.9) {
     const need = dotBudget - dots.length;
-    for (let i = 0; i < need * 30 && dots.length < dotBudget; i++) {
-      const s = sampleOne(spacing * 0.4);
+    for (let i = 0; i < need * 50 && dots.length < dotBudget; i++) {
+      const s = sampleOne(spacing * 0.28);
+      if (s) dots.push(s);
+    }
+  }
+  if (dots.length < dotBudget) {
+    const need = dotBudget - dots.length;
+    for (let i = 0; i < need * 40 && dots.length < dotBudget; i++) {
+      const s = sampleOne(spacing * 0.16);
       if (s) dots.push(s);
     }
   }

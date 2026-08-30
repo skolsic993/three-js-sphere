@@ -20,6 +20,9 @@ export const GOLD_TILE = 6;
 const GOLD_ROUGH = 48;
 const ROCK_ROUGH = 240;
 
+/** Charcoal albedo scale — keeps stone dark next to gold flecks. */
+const CHARCOAL_ALBEDO = 0.1;
+
 export interface GoldStrip {
   data: Uint8ClampedArray;
   width: number;
@@ -92,31 +95,79 @@ export function isWarmOre(r: number, g: number, b: number): boolean {
   return r > g && g >= b && r - b > 48 && r > 72 && r / Math.max(g, 1) > 1.08;
 }
 
+/** Sample a grayscale roughness map (R channel) at albedo UV, scaled into rock range. */
+function sampleRockRoughness(
+  roughSrc: Uint8ClampedArray | null,
+  roughW: number,
+  roughH: number,
+  x: number,
+  y: number,
+  albedoW: number,
+  albedoH: number,
+): number {
+  if (!roughSrc || roughW <= 0 || roughH <= 0) return ROCK_ROUGH;
+  const rx = Math.min(roughW - 1, Math.floor((x / albedoW) * roughW));
+  const ry = Math.min(roughH - 1, Math.floor((y / albedoH) * roughH));
+  const sample = roughSrc[(ry * roughW + rx) * 4]! / 255;
+  // Map Poly Haven roughness into a high-dielectric band around ROCK_ROUGH.
+  return Math.round(200 + sample * 55);
+}
+
 /**
  * Sharpen rock albedo, replace warm flecks with tiled scratched gold, and build
- * matching metalness / roughness maps.
+ * matching metalness / roughness maps. Optional Poly Haven roughness drives
+ * charcoal grit; gold flecks keep scratched-leaf roughness.
+ *
+ * Sources larger than MAX_COMPOSITE_SIZE (e.g. 8K authoring maps) are downsampled
+ * before CPU compositing so getImageData stays browser-safe.
  */
+const MAX_COMPOSITE_SIZE = 4096;
+
 export function compositeRockAlbedoWithGold(
   source: THREE.Texture,
   goldStrip: GoldStrip,
+  roughnessSource?: THREE.Texture,
 ): {
   map: THREE.CanvasTexture;
   metalnessMap: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
 } {
   const img = source.image as HTMLImageElement | ImageBitmap;
-  const w = img.width;
-  const h = img.height;
+  const scale = Math.min(
+    1,
+    MAX_COMPOSITE_SIZE / Math.max(img.width, img.height),
+  );
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
 
   const albedoCanvas = document.createElement("canvas");
   albedoCanvas.width = w;
   albedoCanvas.height = h;
   const aCtx = albedoCanvas.getContext("2d", { willReadFrequently: true });
   if (!aCtx) throw new Error("Could not process rock albedo");
-  aCtx.drawImage(img, 0, 0);
+  aCtx.drawImage(img, 0, 0, w, h);
   const image = aCtx.getImageData(0, 0, w, h);
   const src = image.data;
   const copy = new Uint8ClampedArray(src);
+
+  let roughSrc: Uint8ClampedArray | null = null;
+  let roughW = 0;
+  let roughH = 0;
+  if (roughnessSource) {
+    const rImg = roughnessSource.image as HTMLImageElement | ImageBitmap;
+    roughW = rImg.width;
+    roughH = rImg.height;
+    const tmp = document.createElement("canvas");
+    tmp.width = roughW;
+    tmp.height = roughH;
+    const tCtx = tmp.getContext("2d", { willReadFrequently: true });
+    if (!tCtx) throw new Error("Could not sample rock roughness map");
+    tCtx.drawImage(rImg, 0, 0);
+    roughSrc = new Uint8ClampedArray(
+      tCtx.getImageData(0, 0, roughW, roughH).data,
+    );
+    roughnessSource.dispose();
+  }
 
   const metalCanvas = document.createElement("canvas");
   metalCanvas.width = w;
@@ -179,11 +230,20 @@ export function compositeRockAlbedoWithGold(
         const roughVal = Math.round(GOLD_ROUGH + scratch * 28);
         rough[i] = rough[i + 1] = rough[i + 2] = roughVal;
       } else {
-        src[i] = Math.round(r * 0.78);
-        src[i + 1] = Math.round(g * 0.78);
-        src[i + 2] = Math.round(b * 0.78);
+        src[i] = Math.round(r * CHARCOAL_ALBEDO);
+        src[i + 1] = Math.round(g * CHARCOAL_ALBEDO);
+        src[i + 2] = Math.round(b * CHARCOAL_ALBEDO);
         metal[i] = metal[i + 1] = metal[i + 2] = 0;
-        rough[i] = rough[i + 1] = rough[i + 2] = ROCK_ROUGH;
+        const rockRough = sampleRockRoughness(
+          roughSrc,
+          roughW,
+          roughH,
+          x,
+          y,
+          w,
+          h,
+        );
+        rough[i] = rough[i + 1] = rough[i + 2] = rockRough;
       }
       metal[i + 3] = 255;
       rough[i + 3] = 255;

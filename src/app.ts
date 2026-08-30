@@ -43,7 +43,7 @@ export type ModeName =
 
 const GROUND_Y = -2.05; // the floor the rock floats above
 
-/** Scenery rocks that sit under / around the canvas — not paint targets. */
+/** Scenery rocks around the canvas — not paint targets. */
 interface CompanionSpec {
   seed: number;
   scale: number;
@@ -53,22 +53,6 @@ interface CompanionSpec {
   /** How many crystal clusters to seed on this rock. */
   crystalClusters: number;
   flecks: number;
-}
-
-/**
- * Tiny side debris that drifts in place — explosion shrapnel that shrinks with
- * distance from the main mass. Animated each frame; never a paint target.
- */
-interface FloatingDebris {
-  mesh: THREE.Mesh;
-  rest: THREE.Vector3;
-  /** Per-axis bob amplitude (world units) — smaller chips drift less. */
-  amp: THREE.Vector3;
-  /** Angular frequencies for the position bob. */
-  freq: THREE.Vector3;
-  phase: THREE.Vector3;
-  /** Slow tumble rates (rad/s). */
-  spin: THREE.Vector3;
 }
 
 interface Stroke {
@@ -159,9 +143,6 @@ export class App {
 
   /** Mouse-driven tilt: target from pointer position, smoothed onto floatRoot each frame. */
   private tiltTarget = new THREE.Vector2(0, 0);
-
-  /** Side shrapnel chips — subtle space drift around the main rock. */
-  private floatingDebris: FloatingDebris[] = [];
 
   private hud = document.getElementById("hud")!;
   private lastTime = 0;
@@ -293,7 +274,7 @@ export class App {
    * No floor or sky mesh: the canvas stays fully transparent for compositing.
    */
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0xc4a882, 0.55);
+    const hemi = new THREE.HemisphereLight(0xb8d4f5, 0xc4a882, 0.22);
 
     const key = new THREE.SpotLight(0xfff2d8, 70, 0, Math.PI / 3.8, 0.45, 1.4);
     key.position.set(4.2, 7.2, 3.2);
@@ -306,23 +287,23 @@ export class App {
     key.shadow.normalBias = 0.02;
     key.shadow.radius = 4;
 
-    const fill = new THREE.DirectionalLight(0xc5d8f0, 1.4);
+    const fill = new THREE.DirectionalLight(0xc5d8f0, 0.55);
     fill.position.set(-3.5, 4, 3.5);
 
-    const back = new THREE.DirectionalLight(0xd0e4ff, 1.2);
+    const back = new THREE.DirectionalLight(0xd0e4ff, 0.7);
     back.position.set(-2.5, 4, -5);
-    const kick = new THREE.DirectionalLight(0xffe0b0, 1.1);
+    const kick = new THREE.DirectionalLight(0xffe0b0, 0.65);
     kick.position.set(5, 2, -2.5);
     const goldKick = new THREE.DirectionalLight(0xffe2a8, 4.2);
     goldKick.position.set(3, 8, 2);
 
     this.backLights = [
-      { light: back, base: 1.2 },
-      { light: kick, base: 1.1 },
+      { light: back, base: 0.7 },
+      { light: kick, base: 0.65 },
     ];
 
-    // Soft bounce from below so the rock's underside doesn't crush to black.
-    const under = new THREE.PointLight(0xe8c898, 0.4, 7, 1.6);
+    // Soft bounce from below — kept low so the underside stays near-black.
+    const under = new THREE.PointLight(0xe8c898, 0.12, 7, 1.6);
     under.position.set(0, GROUND_Y + 0.35, 0);
 
     this.scene.add(hemi, key, key.target, fill, back, kick, goldKick, under);
@@ -331,7 +312,13 @@ export class App {
   /** The canvas itself: a jagged dark rock with Poly Haven PBR maps — quiet stage for crystals.
    *  Displacement is baked into the mesh so paint raycasts match the visible surface. */
   private async setupCanvasRock(): Promise<void> {
-    const textures = await loadRockTextures();
+    const textures = await loadRockTextures(
+      (
+        this.renderer.backend as {
+          capabilities?: { getMaxAnisotropy?: () => number };
+        }
+      ).capabilities?.getMaxAnisotropy?.() ?? 16,
+    );
     const geo = createRockGeometry(textures.displacementMap);
     const mat = createRockMaterial(textures);
 
@@ -348,7 +335,6 @@ export class App {
 
     this.floatRoot.add(this.mainRock);
     this.addCompanionRocks(textures);
-    this.addFloatingShrapnel(textures);
     this.scene.add(this.floatRoot);
     // Only the canvas rock is paintable — companions are scenery.
     indexForRaycasts(this.rock);
@@ -405,246 +391,63 @@ export class App {
   }
 
   /**
-   * Debris rocks under, around, and above the main specimen — same charcoal/gold material,
-   * each with a couple of seeded crystal clusters so the set reads as one mineral family.
+   * A few similar-sized satellite rocks around the main specimen — same charcoal
+   * material, no gold or crystals, so the centerpiece stays the only mineral.
    */
   private addCompanionRocks(textures: RockTextures): void {
     const companions: CompanionSpec[] = [
-      // Beneath — under the main mass, with a little breathing room.
+      // Camera is at (+X, +Z); screen-right is −Z, screen-left is +Z, up is +Y.
       {
         seed: 11.3,
-        scale: 0.72,
-        detail: 5,
-        position: [-1.55, -1.5, 0.7],
+        scale: 0.18,
+        detail: 4,
+        position: [0.25, 1.55, 1.75],
         rotation: [0.35, 1.1, -0.2],
-        crystalClusters: 2,
-        flecks: 3,
+        crystalClusters: 0,
+        flecks: 0,
       },
       {
         seed: 22.7,
-        scale: 0.52,
+        scale: 0.16,
         detail: 4,
-        position: [1.45, -1.6, -0.85],
+        position: [0.35, 1.45, -1.7],
         rotation: [-0.4, 0.6, 0.5],
-        crystalClusters: 2,
-        flecks: 2,
+        crystalClusters: 0,
+        flecks: 0,
       },
       {
         seed: 33.1,
-        scale: 0.38,
+        scale: 0.17,
         detail: 4,
-        position: [0.25, -1.8, 1.4],
+        position: [0.45, 0.1, -2.15],
         rotation: [0.6, -0.8, 0.15],
-        crystalClusters: 1,
-        flecks: 2,
+        crystalClusters: 0,
+        flecks: 0,
       },
       {
         seed: 88.2,
-        scale: 0.45,
+        scale: 0.19,
         detail: 4,
-        position: [-1.25, -1.75, -1.2],
+        position: [0.3, -1.5, -1.55],
         rotation: [0.25, -0.5, 0.8],
-        crystalClusters: 1,
-        flecks: 2,
+        crystalClusters: 0,
+        flecks: 0,
       },
       {
         seed: 91.6,
-        scale: 0.3,
+        scale: 0.16,
         detail: 4,
-        position: [1.2, -1.85, 1.05],
+        position: [0.2, -1.9, 0.15],
         rotation: [-0.7, 1.0, -0.3],
-        crystalClusters: 1,
-        flecks: 1,
+        crystalClusters: 0,
+        flecks: 0,
       },
-      // Around — small satellites near the silhouette.
       {
         seed: 44.9,
-        scale: 0.2,
-        detail: 3,
-        position: [-2.15, 0.15, 1.25],
+        scale: 0.18,
+        detail: 4,
+        position: [-0.15, -1.55, 1.6],
         rotation: [0.9, 0.3, -0.5],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 55.2,
-        scale: 0.16,
-        detail: 3,
-        position: [2.1, -0.25, 1.4],
-        rotation: [-0.5, 1.4, 0.7],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 66.8,
-        scale: 0.14,
-        detail: 3,
-        position: [-1.85, 0.55, -1.9],
-        rotation: [0.2, -1.2, 0.9],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 77.4,
-        scale: 0.12,
-        detail: 3,
-        position: [2.0, 0.35, -1.55],
-        rotation: [1.1, 0.5, -0.3],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      {
-        seed: 102.1,
-        scale: 0.18,
-        detail: 3,
-        position: [-2.3, -0.4, -0.45],
-        rotation: [0.4, 1.8, 0.2],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 113.5,
-        scale: 0.15,
-        detail: 3,
-        position: [2.25, 0.45, 0.3],
-        rotation: [-0.8, 0.2, 1.1],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 124.8,
-        scale: 0.13,
-        detail: 3,
-        position: [0.65, -0.55, -2.2],
-        rotation: [0.6, -0.9, -0.4],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      {
-        seed: 135.3,
-        scale: 0.11,
-        detail: 3,
-        position: [-0.55, 0.7, 2.1],
-        rotation: [1.3, 0.7, 0.15],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      {
-        seed: 146.7,
-        scale: 0.17,
-        detail: 3,
-        position: [1.55, -0.85, 1.9],
-        rotation: [-0.3, 1.5, 0.6],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 157.9,
-        scale: 0.1,
-        detail: 3,
-        position: [-1.9, -0.7, 1.65],
-        rotation: [0.85, -0.4, 1.2],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      // Above — larger chunks over the main mass.
-      {
-        seed: 201.4,
-        scale: 0.58,
-        detail: 5,
-        position: [-1.05, 1.7, 0.5],
-        rotation: [0.45, -0.9, 0.35],
-        crystalClusters: 2,
-        flecks: 3,
-      },
-      {
-        seed: 212.8,
-        scale: 0.48,
-        detail: 4,
-        position: [1.15, 1.6, -0.65],
-        rotation: [-0.55, 1.2, -0.25],
-        crystalClusters: 2,
-        flecks: 2,
-      },
-      {
-        seed: 223.1,
-        scale: 0.36,
-        detail: 4,
-        position: [0.15, 1.95, 1.0],
-        rotation: [0.7, 0.4, -0.85],
-        crystalClusters: 1,
-        flecks: 2,
-      },
-      {
-        seed: 234.6,
-        scale: 0.42,
-        detail: 4,
-        position: [-0.7, 1.5, -1.25],
-        rotation: [-0.3, 1.6, 0.55],
-        crystalClusters: 1,
-        flecks: 2,
-      },
-      // Above — smaller satellites near the upper silhouette.
-      {
-        seed: 245.2,
-        scale: 0.18,
-        detail: 3,
-        position: [1.65, 1.35, 0.85],
-        rotation: [1.0, -0.6, 0.4],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 256.7,
-        scale: 0.14,
-        detail: 3,
-        position: [-1.7, 1.55, -0.7],
-        rotation: [-0.7, 0.85, 1.1],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 267.3,
-        scale: 0.11,
-        detail: 3,
-        position: [0.8, 2.15, -0.25],
-        rotation: [0.5, 1.4, -0.7],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      {
-        seed: 278.9,
-        scale: 0.16,
-        detail: 3,
-        position: [-1.25, 1.8, 1.15],
-        rotation: [1.2, 0.2, -0.45],
-        crystalClusters: 1,
-        flecks: 1,
-      },
-      {
-        seed: 289.5,
-        scale: 0.09,
-        detail: 3,
-        position: [0.4, 2.25, 0.7],
-        rotation: [-1.0, 0.7, 0.9],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      {
-        seed: 301.2,
-        scale: 0.13,
-        detail: 3,
-        position: [1.4, 1.7, -1.25],
-        rotation: [0.35, -1.3, 0.6],
-        crystalClusters: 1,
-        flecks: 0,
-      },
-      {
-        seed: 312.8,
-        scale: 0.08,
-        detail: 3,
-        position: [-0.3, 2.0, -1.4],
-        rotation: [0.9, 1.1, -0.2],
         crystalClusters: 0,
         flecks: 0,
       },
@@ -652,7 +455,7 @@ export class App {
 
     const scenerySettings: CrystalSettings = {
       ...defaultCrystalSettings,
-      crystalSize: 0.09,
+      crystalSize: 0.05,
       clusterDensity: 8,
       shards: 5,
       spread: 1.8,
@@ -702,94 +505,6 @@ export class App {
         this.sceneryStrokes.push(stroke);
       }
 
-      this.floatRoot.add(mesh);
-    }
-  }
-
-  /**
-   * Extra side chips — denser near the main rock, shrinking outward like blast
-   * shrapnel. Each piece drifts and tumbles very slightly so the set feels
-   * weightless without stealing focus from the specimen.
-   */
-  private addFloatingShrapnel(textures: RockTextures): void {
-    const COUNT = 44;
-    const NEAR = 2.55; // clear of the main silhouette — no overlap
-    const FAR = 3.45; // still reads as part of the same cluster
-    const rnd = mulberry32(0x5f9a); // fixed seed so the field stays stable across reloads
-
-    for (let i = 0; i < COUNT; i++) {
-      // Prefer the sides: full azimuth, compressed vertical so chips hug the equator.
-      const azimuth = rnd() * Math.PI * 2;
-      const elev = (rnd() - 0.5) * 1.15; // ~±33°
-      const t = rnd(); // 0 near → 1 far
-      // Bias a few chips closer so the field densifies toward the main mass.
-      const distT = t * t;
-
-      // Size falls off with distance — near chips ~chunk, far ones ~dust.
-      // Occasional near pieces punch larger so the field isn't all pebbles.
-      const base = 0.2 * Math.pow(1 - distT, 1.25) + 0.03;
-      const chunkBoost = distT < 0.35 && rnd() > 0.62 ? 1.35 + rnd() * 0.45 : 1;
-      const scale = base * chunkBoost * (0.85 + rnd() * 0.35);
-
-      // Push centers out by their own radius so bigger chips never kiss the main mass.
-      const dist = NEAR + distT * (FAR - NEAR) + scale * 0.9;
-
-      const cosE = Math.cos(elev);
-      const x = Math.cos(azimuth) * cosE * dist;
-      const y = Math.sin(elev) * dist * 0.85;
-      const z = Math.sin(azimuth) * cosE * dist;
-
-      const detail = scale > 0.12 ? 4 : scale > 0.07 ? 3 : 2;
-
-      const geo = createRockGeometry(textures.displacementMap, {
-        detail,
-        scale,
-        seed: 400 + i * 17.3 + rnd() * 9,
-      });
-      const mat = createRockMaterial(textures);
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, y, z);
-      mesh.rotation.set(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
-      mesh.castShadow = scale > 0.06;
-      mesh.receiveShadow = false;
-      mesh.raycast = () => {};
-
-      // Only the chunkier near chips get a fleck — keeps the field quiet.
-      if (scale > 0.1 && rnd() > 0.5) {
-        mesh.add(
-          createGoldFlecks(geo, {
-            veinCount: scale > 0.18 ? 2 : 1,
-            seed: 9000 + i * 31,
-          }),
-        );
-      }
-
-      // Drift amplitude scales with size so tiny chips barely move.
-      const drift = 0.012 + scale * 0.2;
-      this.floatingDebris.push({
-        mesh,
-        rest: new THREE.Vector3(x, y, z),
-        amp: new THREE.Vector3(
-          drift * (0.7 + rnd() * 0.6),
-          drift * (0.9 + rnd() * 0.7),
-          drift * (0.7 + rnd() * 0.6),
-        ),
-        freq: new THREE.Vector3(
-          0.18 + rnd() * 0.22,
-          0.14 + rnd() * 0.18,
-          0.16 + rnd() * 0.2,
-        ),
-        phase: new THREE.Vector3(
-          rnd() * Math.PI * 2,
-          rnd() * Math.PI * 2,
-          rnd() * Math.PI * 2,
-        ),
-        spin: new THREE.Vector3(
-          (rnd() - 0.5) * 0.055,
-          (rnd() - 0.5) * 0.07,
-          (rnd() - 0.5) * 0.045,
-        ),
-      });
       this.floatRoot.add(mesh);
     }
   }
@@ -1045,19 +760,6 @@ export class App {
       5,
       dt,
     );
-
-    // Shrapnel chips: soft sine drift + slow tumble — space dust, not orbiting moons.
-    for (const d of this.floatingDebris) {
-      const { mesh, rest, amp, freq, phase, spin } = d;
-      mesh.position.set(
-        rest.x + Math.sin(tSec * freq.x + phase.x) * amp.x,
-        rest.y + Math.sin(tSec * freq.y + phase.y) * amp.y,
-        rest.z + Math.cos(tSec * freq.z + phase.z) * amp.z,
-      );
-      mesh.rotation.x += spin.x * dt;
-      mesh.rotation.y += spin.y * dt;
-      mesh.rotation.z += spin.z * dt;
-    }
 
     this.post.render();
   }

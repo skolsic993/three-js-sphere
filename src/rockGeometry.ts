@@ -13,27 +13,104 @@ export interface RockTextures {
   roughnessMap: THREE.Texture;
   metalnessMap: THREE.Texture;
   displacementMap: THREE.Texture;
+  aoMap: THREE.Texture;
 }
 
 const TEX_BASE = "/textures";
 /** Keep in sync with UV sampling in createRockGeometry. */
-const TEX_REPEAT = 1.05;
+const TEX_REPEAT = 3;
 
-export async function loadRockTextures(): Promise<RockTextures> {
+/** Hermite smoothstep for soft AO falloff from valleys to peaks. */
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Derive ambient occlusion from Poly Haven displacement: recesses darken,
+ * peaks stay open. Gold flecks (high metalness) stay fully unoccluded.
+ */
+function buildRockAoMap(
+  displacementMap: THREE.Texture,
+  metalnessMap: THREE.Texture,
+): THREE.CanvasTexture {
+  const dispImg = displacementMap.image as HTMLImageElement | ImageBitmap;
+  const metalImg = metalnessMap.image as
+    | HTMLImageElement
+    | ImageBitmap
+    | HTMLCanvasElement;
+  const w = dispImg.width;
+  const h = dispImg.height;
+
+  const dispCanvas = document.createElement("canvas");
+  dispCanvas.width = w;
+  dispCanvas.height = h;
+  const dCtx = dispCanvas.getContext("2d", { willReadFrequently: true });
+  if (!dCtx) throw new Error("Could not sample rock displacement for AO");
+  dCtx.drawImage(dispImg, 0, 0);
+  const disp = dCtx.getImageData(0, 0, w, h).data;
+
+  const metalCanvas = document.createElement("canvas");
+  metalCanvas.width = w;
+  metalCanvas.height = h;
+  const mCtx = metalCanvas.getContext("2d", { willReadFrequently: true });
+  if (!mCtx) throw new Error("Could not sample metalness for AO");
+  mCtx.drawImage(metalImg, 0, 0, w, h);
+  const metal = mCtx.getImageData(0, 0, w, h).data;
+
+  const aoCanvas = document.createElement("canvas");
+  aoCanvas.width = w;
+  aoCanvas.height = h;
+  const aCtx = aoCanvas.getContext("2d");
+  if (!aCtx) throw new Error("Could not build rock AO map");
+  const aoImage = aCtx.createImageData(w, h);
+  const ao = aoImage.data;
+
+  const darkFloor = 0.28;
+  const low = 0.25;
+  const high = 0.72;
+
+  for (let i = 0; i < w * h; i++) {
+    const px = i * 4;
+    if (metal[px]! >= 128) {
+      ao[px] = ao[px + 1] = ao[px + 2] = 255;
+    } else {
+      const height = disp[px]! / 255;
+      const open = smoothstep(low, high, height);
+      const val = Math.round((darkFloor + (1 - darkFloor) * open) * 255);
+      ao[px] = ao[px + 1] = ao[px + 2] = val;
+    }
+    ao[px + 3] = 255;
+  }
+
+  aCtx.putImageData(aoImage, 0, 0);
+  const tex = new THREE.CanvasTexture(aoCanvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+export async function loadRockTextures(
+  maxAnisotropy = 16,
+): Promise<RockTextures> {
   const loader = new THREE.TextureLoader();
-  const [rawMap, normalMap, displacementMap, goldStrip] = await Promise.all([
-    loader.loadAsync(`${TEX_BASE}/dark_rock_diff_2k.png`),
-    loader.loadAsync(`${TEX_BASE}/dark_rock_nor_gl_2k.jpg`),
-    loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
-    loadGoldStrip(),
-  ]);
+  const [rawMap, normalMap, displacementMap, roughnessSrc, goldStrip] =
+    await Promise.all([
+      loader.loadAsync(`${TEX_BASE}/dark_rock_diff_2k.webp`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock_nor_gl_2k.jpg`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock_rough_2k.jpg`),
+      loadGoldStrip(),
+    ]);
 
   const { map, metalnessMap, roughnessMap } = compositeRockAlbedoWithGold(
     rawMap,
     goldStrip,
+    roughnessSrc,
   );
+  const aoMap = buildRockAoMap(displacementMap, metalnessMap);
 
-  for (const tex of [normalMap, displacementMap]) {
+  for (const tex of [normalMap, displacementMap, aoMap]) {
     tex.colorSpace = THREE.NoColorSpace;
   }
   for (const tex of [
@@ -42,17 +119,25 @@ export async function loadRockTextures(): Promise<RockTextures> {
     roughnessMap,
     metalnessMap,
     displacementMap,
+    aoMap,
   ]) {
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
-    tex.anisotropy = 16;
+    tex.anisotropy = maxAnisotropy;
     tex.generateMipmaps = true;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.repeat.set(TEX_REPEAT, TEX_REPEAT);
   }
 
-  return { map, normalMap, roughnessMap, metalnessMap, displacementMap };
+  return {
+    map,
+    normalMap,
+    roughnessMap,
+    metalnessMap,
+    displacementMap,
+    aoMap,
+  };
 }
 
 /** Hash → [0, 1) for stable per-vertex procedural noise. */
@@ -371,13 +456,15 @@ export function createRockMaterial(
     color: 0xffffff,
     map: textures.map,
     normalMap: textures.normalMap,
-    normalScale: new THREE.Vector2(1.35, 1.35),
+    normalScale: new THREE.Vector2(1.6, 1.6),
     roughnessMap: textures.roughnessMap,
     roughness: 1,
     metalnessMap: textures.metalnessMap,
     metalness: 1, // scratched-gold flecks from metalnessMap catch studio lights
+    aoMap: textures.aoMap,
+    aoMapIntensity: 1.15,
     clearcoat: 0,
-    envMapIntensity: 0.85,
+    envMapIntensity: 0.4,
     specularIntensity: 0.45,
   });
 }

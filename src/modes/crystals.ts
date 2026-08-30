@@ -52,7 +52,7 @@ export const defaultCrystalSettings: CrystalSettings = {
   palette: "Citrine",
   surfaceCoverage: 0.8,
   clusterDensity: 16,
-  crystalSize: 0.158,
+  crystalSize: 0.08,
   shards: 8,
   spread: 2.5,
   tilt: 1,
@@ -381,6 +381,14 @@ function easeOutBack(t: number): number {
   return 1 + c3 * u * u * u + c1 * u * u;
 }
 
+function maxBirth(instances: CrystalInstance[]): number {
+  let max = 0;
+  for (const inst of instances) {
+    if (inst.birth > max) max = inst.birth;
+  }
+  return max;
+}
+
 class CrystalStroke implements StrokeInstance {
   readonly group = new THREE.Group();
 
@@ -440,11 +448,10 @@ class CrystalStroke implements StrokeInstance {
       this.clear.push(makeMesh(v, clearMat));
     }
 
+    // Loop — Math.max(...arr) stack-overflows at ~120k args (dense coverage).
     this.total =
       scatterMode === "points"
-        ? instances.length === 0
-          ? 0
-          : Math.max(...instances.map((inst) => inst.birth))
+        ? maxBirth(instances)
         : this.strokeLength(samples);
     this.applySettings(settings); // derive matrices/colors/visibility for the first time
   }

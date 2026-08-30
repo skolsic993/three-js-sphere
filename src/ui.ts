@@ -68,7 +68,7 @@ export function buildGui(app: App): GUI {
     .name("Clusters / unit")
     .onChange(liveCrystal);
   fCrystal
-    .add(c, "crystalSize", 0.06, 0.4)
+    .add(c, "crystalSize", 0.03, 0.4)
     .name("Crystal size")
     .onChange(liveCrystal);
   fCrystal
