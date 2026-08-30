@@ -294,8 +294,8 @@ export class App {
     // Only the canvas rock is paintable — companions are scenery.
     indexForRaycasts(this.rock);
 
-    // Percentage fill before any painting — same dial a host monorepo can set.
-    this.rebuildMainRockCoverage(false);
+    // Bare rock first; gold coverage grows in on the next frames (same as ▶ Replay).
+    this.rebuildMainRockCoverage(true);
   }
 
   /**

@@ -47,13 +47,14 @@ export const defaultCrystalSettings: CrystalSettings = {
   tilt: 0.4,
   sizeJitter: 1,
   glow: 0,
-  growthSpeed: 1.4,
+  growthSpeed: 4, // start at the GUI max so load / replay feel snappy
 };
 
 /** Instances are generated at these maxima; the density/shard sliders cull, never rebuild.
  *  Keep in sync with the GUI slider ranges. */
 export const MAX_DENSITY = 16;
 export const MAX_SHARDS = 16;
+export const MAX_GROWTH_SPEED = 4;
 
 const EMISSIVE = new THREE.Color(0xffc050);
 

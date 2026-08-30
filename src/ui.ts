@@ -1,5 +1,6 @@
 import GUI from "lil-gui";
 import type { App } from "./app";
+import { MAX_GROWTH_SPEED } from "./modes/crystals";
 
 export function buildGui(app: App): GUI {
   const gui = new GUI();
@@ -51,7 +52,7 @@ export function buildGui(app: App): GUI {
     .name("Inner glow")
     .onChange((v: number) => app.setGlow(v));
   fCrystal
-    .add(c, "growthSpeed", 0.2, 4)
+    .add(c, "growthSpeed", 0.2, MAX_GROWTH_SPEED)
     .name("Growth speed")
     .onChange(liveCrystal);
 
