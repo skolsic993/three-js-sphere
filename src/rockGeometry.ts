@@ -99,7 +99,7 @@ export async function loadRockTextures(
       loader.loadAsync(`${TEX_BASE}/dark_rock.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_nor.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
-      loader.loadAsync(`${TEX_BASE}/dark_rock_rough_2k.jpg`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock_rough.webp`),
       loadGoldStrip(),
     ]);
 
