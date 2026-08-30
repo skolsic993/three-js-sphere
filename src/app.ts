@@ -172,8 +172,8 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 1;
-    this.controls.maxDistance = 10;
+    this.controls.minDistance = 7;
+    this.controls.maxDistance = 7;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
@@ -286,6 +286,10 @@ export class App {
     const fill = new THREE.DirectionalLight(0xc5d8f0, 0.05);
     fill.position.set(-3.5, 4, 3.5);
 
+    // Soft fill for the upper-right silhouette — just enough to read facets.
+    const topRight = new THREE.DirectionalLight(0xe8f0ff, 0.12);
+    topRight.position.set(4.5, 5.5, 1.5);
+
     // Bare rim — far side falls into shadow; Backlight slider can bring kickers back.
     const back = new THREE.DirectionalLight(0xd0e4ff, 0.08);
     back.position.set(-2.5, 4, -5);
@@ -303,7 +307,17 @@ export class App {
     const under = new THREE.PointLight(0xe8c898, 0.02, 7, 1.6);
     under.position.set(0, GROUND_Y + 0.35, 0);
 
-    this.scene.add(hemi, key, key.target, fill, back, kick, goldKick, under);
+    this.scene.add(
+      hemi,
+      key,
+      key.target,
+      fill,
+      topRight,
+      back,
+      kick,
+      goldKick,
+      under,
+    );
   }
 
   /** The canvas itself: a jagged dark rock with Poly Haven PBR maps — quiet stage for crystals.
