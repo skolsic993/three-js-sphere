@@ -665,11 +665,6 @@ export class App {
     document.body.classList.toggle("draw", draw);
     document.body.classList.toggle("orbit", !draw);
 
-    const btn = document.getElementById("modeBtn")!;
-    btn.querySelector(".label")!.textContent = draw
-      ? "Paint mode"
-      : "Orbit mode";
-
     if (!draw) this.hovering = false;
     this.updateHud();
   }

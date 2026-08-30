@@ -5,7 +5,7 @@ import type { AuroraPaletteName } from "./modes/aurora";
 import type { ReefPaletteName } from "./modes/reef";
 
 export function buildGui(app: App): GUI {
-  const gui = new GUI({ title: "Geometry Painter" });
+  const gui = new GUI();
   const s = app.settings;
   const c = app.crystal;
   const f = app.fissure;

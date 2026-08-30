@@ -3,19 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Geometry Painter — three.js WebGPU</title>
+    <title>Golden Rock</title>
     <style>
       html,
       body {
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #0a0b10;
+        background: #ffffff;
         font-family: system-ui, sans-serif;
+      }
+      /* Film grain from /noise.png — tiled, overlay-blended over white. */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        display: block;
+        background-image: url("/noise.png");
+        background-size: 150px;
+        background-repeat: repeat;
+        mix-blend-mode: overlay;
       }
       #app {
         position: fixed;
         inset: 0;
+        z-index: 1;
       }
       /* Custom "brush" cursor while drawing; grab cursor while orbiting. */
       body.draw #app {
@@ -26,24 +40,6 @@
       }
       body.orbit #app:active {
         cursor: grabbing;
-      }
-
-      #title {
-        position: fixed;
-        left: 16px;
-        top: 14px;
-        color: #eef0f6;
-        font-size: 15px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        pointer-events: none;
-        opacity: 0.92;
-        z-index: 3;
-      }
-      #title span {
-        opacity: 0.55;
-        font-weight: 400;
-        font-size: 13px;
       }
 
       /* Draw-mode border glow: a pulsing violet frame so it's unmistakable you're painting. */
@@ -206,7 +202,6 @@
   <body>
     <div id="app"></div>
     <div id="drawFrame"></div>
-    <div id="title">💎 Geometry Painter <span>three.js WebGPU</span></div>
     <button id="modeBtn">
       <span class="dot"></span><span class="label">Paint mode</span
       ><span class="key">D</span>
