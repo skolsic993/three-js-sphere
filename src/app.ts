@@ -4,7 +4,11 @@ import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { indexForRaycasts } from "./bvh";
 import { SurfacePainter } from "./surfacePainter";
-import type { StrokeInstance, SurfaceSample } from "./modes/mode";
+import {
+  mulberry32,
+  type StrokeInstance,
+  type SurfaceSample,
+} from "./modes/mode";
 import {
   createCoverageCrystalStroke,
   crystalMode,
@@ -32,6 +36,18 @@ interface CompanionSpec {
   detail: number;
   position: [number, number, number];
   rotation: [number, number, number];
+}
+
+/** Per-rock idle bob — base pose + desynchronized sine drift. */
+interface RockFloat {
+  object: THREE.Object3D;
+  base: THREE.Vector3;
+  ampY: number;
+  ampXZ: number;
+  freqY: number;
+  freqXZ: number;
+  phaseY: number;
+  phaseXZ: number;
 }
 
 interface Stroke {
@@ -92,6 +108,9 @@ export class App {
 
   /** Mouse-driven tilt: target from pointer position, smoothed onto floatRoot each frame. */
   private tiltTarget = new THREE.Vector2(0, 0);
+
+  /** Independent subtle bob for main + each companion (tilt stays on floatRoot). */
+  private floatingRocks: RockFloat[] = [];
 
   private lastTime = 0;
   private regrowPending: { mode: "instant" | "animate" } | null = null;
@@ -287,6 +306,8 @@ export class App {
     // Upright teardrop; gouge is on local +X, facing the camera at (+X, +Z).
     this.mainRock.position.set(0, 0, 0);
     this.mainRock.rotation.set(1.28, 0.26, -0.06);
+    // Slightly calmer bob than companions — paint anchor rides along with the group.
+    this.registerRockFloat(this.mainRock, 0x7a1, { calm: true });
 
     this.floatRoot.add(this.mainRock);
     this.addCompanionRocks(textures);
@@ -411,7 +432,31 @@ export class App {
       mesh.receiveShadow = true;
       mesh.raycast = () => {}; // never a paint target
       this.floatRoot.add(mesh);
+      this.registerRockFloat(mesh, Math.floor(spec.seed * 1000));
     }
+  }
+
+  /**
+   * Snapshot a rock's rest pose and assign a seeded, desynchronized bob.
+   * `calm` keeps the main specimen gentler than the scenery satellites.
+   */
+  private registerRockFloat(
+    object: THREE.Object3D,
+    seed: number,
+    opts: { calm?: boolean } = {},
+  ): void {
+    const rng = mulberry32(seed >>> 0);
+    const calm = opts.calm === true;
+    this.floatingRocks.push({
+      object,
+      base: object.position.clone(),
+      ampY: calm ? 0.025 + rng() * 0.01 : 0.03 + rng() * 0.015,
+      ampXZ: calm ? 0.008 + rng() * 0.004 : 0.01 + rng() * 0.005,
+      freqY: 0.35 + rng() * 0.3,
+      freqXZ: 0.25 + rng() * 0.25,
+      phaseY: rng() * Math.PI * 2,
+      phaseXZ: rng() * Math.PI * 2,
+    });
   }
 
   /** Post: MSAA scene pass + bloom + a gentle lens vignette, tone-mapped on output. */
@@ -606,6 +651,16 @@ export class App {
       5,
       dt,
     );
+
+    // Per-rock idle float — independent phase/freq so they don't bob in sync.
+    for (const f of this.floatingRocks) {
+      f.object.position.x =
+        f.base.x + Math.sin(tSec * f.freqXZ + f.phaseXZ) * f.ampXZ;
+      f.object.position.y =
+        f.base.y + Math.sin(tSec * f.freqY + f.phaseY) * f.ampY;
+      f.object.position.z =
+        f.base.z + Math.cos(tSec * f.freqXZ + f.phaseXZ * 1.3) * f.ampXZ;
+    }
 
     this.post.render();
   }
