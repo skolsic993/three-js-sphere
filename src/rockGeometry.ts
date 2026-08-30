@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { compositeRockAlbedoWithGold, loadGoldStrip } from "./goldMaps";
 
 /**
@@ -98,7 +99,7 @@ export async function loadRockTextures(
     await Promise.all([
       loader.loadAsync(`${TEX_BASE}/dark_rock.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_nor.webp`),
-      loader.loadAsync(`${TEX_BASE}/dark_rock_disp_2k.jpg`),
+      loader.loadAsync(`${TEX_BASE}/dark_rock_disp.webp`),
       loader.loadAsync(`${TEX_BASE}/dark_rock_rough.webp`),
       loadGoldStrip(),
     ]);
@@ -260,6 +261,46 @@ function sampleDisplacement(
   return data[i]! / 255;
 }
 
+/**
+ * Spherical UVs matching PolyhedronGeometry's azimuth/inclination mapping.
+ * Applied on the welded unit sphere before deform (displacement bake needs them).
+ */
+function applySphericalUVs(geo: THREE.BufferGeometry): void {
+  const pos = geo.getAttribute("position") as THREE.BufferAttribute;
+  const uvs = new Float32Array(pos.count * 2);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const u = Math.atan2(v.z, -v.x) / (Math.PI * 2) + 0.5;
+    const incl = Math.atan2(-v.y, Math.sqrt(v.x * v.x + v.z * v.z));
+    uvs[i * 2] = u;
+    uvs[i * 2 + 1] = 1 - (incl / Math.PI + 0.5);
+  }
+  geo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+}
+
+/**
+ * PolyhedronGeometry.correctSeam — faces that straddle u=0/1 get U pushed into a
+ * continuous range so RepeatWrapping doesn't smear across the whole map.
+ * Requires non-indexed geometry (per-corner UVs).
+ */
+function correctUvSeams(geo: THREE.BufferGeometry): void {
+  const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i += 3) {
+    const x0 = uv.getX(i);
+    const x1 = uv.getX(i + 1);
+    const x2 = uv.getX(i + 2);
+    const max = Math.max(x0, x1, x2);
+    const min = Math.min(x0, x1, x2);
+    if (max > 0.9 && min < 0.1) {
+      if (x0 < 0.2) uv.setX(i, x0 + 1);
+      if (x1 < 0.2) uv.setX(i + 1, x1 + 1);
+      if (x2 < 0.2) uv.setX(i + 2, x2 + 1);
+    }
+  }
+  uv.needsUpdate = true;
+}
+
 interface FractureCut {
   nx: number;
   ny: number;
@@ -294,7 +335,15 @@ export function createRockGeometry(
   const scale = opts.scale ?? 2.55;
   const seed = opts.seed ?? 4.1;
 
-  const geo = new THREE.IcosahedronGeometry(1, detail);
+  // PolyhedronGeometry is non-indexed (duplicate verts for UV seams). Weld by
+  // position only — mergeVertices hashes *all* attributes, so differing seam UVs
+  // would leave duplicates and the displacement bake would tear holes again.
+  const raw = new THREE.IcosahedronGeometry(1, detail);
+  raw.deleteAttribute("uv");
+  raw.deleteAttribute("normal");
+  const geo = mergeVertices(raw, 1e-4);
+  raw.dispose();
+  applySphericalUVs(geo);
   const pos = geo.getAttribute("position") as THREE.BufferAttribute;
   const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
 
@@ -442,11 +491,19 @@ export function createRockGeometry(
   if (radius > 0) {
     const s = scale / radius;
     geo.scale(s, s, s);
-    geo.computeVertexNormals();
     geo.computeBoundingSphere();
   }
 
-  return geo;
+  // Welded (indexed) mesh can't fix the azimuth UV seam — one vert can't hold both
+  // u≈0 and u≈1. Split to non-indexed after positions are final (duplicate corners
+  // share the same position → still watertight) and unwrap like PolyhedronGeometry.
+  const textured = geo.toNonIndexed();
+  geo.dispose();
+  correctUvSeams(textured);
+  textured.computeVertexNormals();
+  textured.computeBoundingSphere();
+
+  return textured;
 }
 
 export function createRockMaterial(

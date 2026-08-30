@@ -144,7 +144,6 @@ export class App {
   /** Mouse-driven tilt: target from pointer position, smoothed onto floatRoot each frame. */
   private tiltTarget = new THREE.Vector2(0, 0);
 
-  private hud = document.getElementById("hud")!;
   private lastTime = 0;
   private hovering = false;
   private toastTimer = 0;
@@ -174,7 +173,7 @@ export class App {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 1;
-    this.controls.maxDistance = 13;
+    this.controls.maxDistance = 10;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
@@ -198,15 +197,11 @@ export class App {
     };
     this.painter.onHoverChange = (over) => {
       this.hovering = over;
-      this.updateHud();
     };
 
     buildGui(this);
     this.applyModes();
 
-    document
-      .getElementById("modeBtn")!
-      .addEventListener("click", () => this.toggleMode());
     window.addEventListener("keydown", (e) => {
       if (e.repeat || e.target instanceof HTMLInputElement) return;
       if (e.key.toLowerCase() === "d") this.toggleMode();
@@ -651,7 +646,7 @@ export class App {
     this.bloomNode.threshold.value = v;
   }
 
-  // ---------- modes / hud ----------
+  // ---------- modes ----------
 
   toggleMode(): void {
     this.settings.drawMode = !this.settings.drawMode;
@@ -666,43 +661,6 @@ export class App {
     document.body.classList.toggle("orbit", !draw);
 
     if (!draw) this.hovering = false;
-    this.updateHud();
-  }
-
-  private updateHud(): void {
-    const backend = (this.renderer.backend as { isWebGPUBackend?: boolean })
-      .isWebGPUBackend
-      ? "WebGPU"
-      : "WebGL2 (fallback)";
-    const nouns: Record<ModeName, string> = {
-      Crystals: "crystal vein",
-      "Molten fissures": "molten fissure",
-      "Aurora silk": "silk of aurora",
-      "Bioluminescent reef": "reef colony",
-    };
-    const noun = nouns[this.settings.mode];
-    let mode: string;
-    if (this.settings.drawMode) {
-      mode = this.hovering
-        ? `<b>Drag now</b> to paint a ${noun} across the rock — it grows when you let go.`
-        : `Move over the rock, then <b>drag</b> to paint a ${noun}. Press <b>D</b> to orbit.`;
-    } else {
-      mode =
-        "<b>Orbit mode</b> — drag to rotate, scroll to zoom, right-drag to pan. " +
-        `Press <b>D</b> to paint.`;
-    }
-    this.hud.innerHTML = `${mode}<div class="sub">Mode: ${this.settings.mode} · Renderer: ${backend}</div>`;
-  }
-
-  private showToast(msg: string): void {
-    const el = document.getElementById("toast")!;
-    el.textContent = msg;
-    el.classList.add("show");
-    clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(
-      () => el.classList.remove("show"),
-      1800,
-    );
   }
 
   // ---------- frame loop ----------

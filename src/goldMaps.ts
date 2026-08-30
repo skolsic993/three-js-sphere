@@ -6,8 +6,7 @@ import * as THREE from "three";
  * and facets share one metal look.
  */
 
-export const GOLD_COLLAGE_URL =
-  "/textures/gold_textures_for_you__by_hibbary_dea5nys-fullview.jpg";
+export const GOLD_COLLAGE_URL = "/textures/gold_texture.webp";
 
 /** Strip 4 of 6 (0-based) — bright yellow-gold leaf. */
 const GOLD_STRIP_INDEX = 3;
