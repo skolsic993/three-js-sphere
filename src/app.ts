@@ -126,7 +126,7 @@ export class App {
     this.controls = new OrbitControls(this.camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 9;
+    this.controls.minDistance = 1;
     this.controls.maxDistance = 9;
     this.controls.target.set(0, -0.1, 0);
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -248,7 +248,7 @@ export class App {
 
     // Upright teardrop; gouge is on local +X, facing the camera at (+X, +Z).
     this.mainRock.position.set(0, 0, 0);
-    this.mainRock.rotation.set(1.28, 0.26, -0.06);
+    this.mainRock.rotation.set(1.52, 0.26, 0.32);
     // Slightly calmer bob than companions — paint anchor rides along with the group.
     this.registerRockFloat(this.mainRock, 0x7a1, { calm: true });
 
