@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gold Cluster</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        font-family: system-ui, sans-serif;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+        cursor: grab;
+      }
+      #app:active {
+        cursor: grabbing;
+      }
+      .fatal {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        color: #ff8a80;
+        background: rgba(20, 8, 8, 0.85);
+        padding: 16px 22px;
+        border-radius: 10px;
+        font-size: 14px;
+        max-width: 480px;
+        z-index: 6;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/mainCluster.ts"></script>
+  </body>
+</html>

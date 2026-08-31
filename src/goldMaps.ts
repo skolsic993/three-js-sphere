@@ -20,7 +20,7 @@ const GOLD_ROUGH = 48;
 const ROCK_ROUGH = 240;
 
 /** Charcoal albedo scale — keeps stone dark next to gold flecks. */
-const CHARCOAL_ALBEDO = 0.1;
+export const CHARCOAL_ALBEDO = 0.1;
 
 export interface GoldStrip {
   data: Uint8ClampedArray;
@@ -285,6 +285,160 @@ export function compositeRockAlbedoWithGold(
     metalnessMap: canvasTex(metalCanvas, THREE.NoColorSpace),
     roughnessMap: canvasTex(roughCanvas, THREE.NoColorSpace),
   };
+}
+
+/**
+ * Same CPU path as the paint-scene rock albedo (unsharp + charcoal scale) but every
+ * pixel stays dielectric — warm ore flecks darken instead of swapping to gold.
+ */
+export function buildCharcoalRockMaps(
+  source: THREE.Texture,
+  roughnessSource?: THREE.Texture,
+): {
+  map: THREE.CanvasTexture;
+  metalnessMap: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const img = source.image as HTMLImageElement | ImageBitmap;
+  const scale = Math.min(
+    1,
+    MAX_COMPOSITE_SIZE / Math.max(img.width, img.height),
+  );
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+
+  const albedoCanvas = document.createElement("canvas");
+  albedoCanvas.width = w;
+  albedoCanvas.height = h;
+  const aCtx = albedoCanvas.getContext("2d", { willReadFrequently: true });
+  if (!aCtx) throw new Error("Could not process rock albedo");
+  aCtx.drawImage(img, 0, 0, w, h);
+  const image = aCtx.getImageData(0, 0, w, h);
+  const src = image.data;
+  const copy = new Uint8ClampedArray(src);
+
+  let roughSrc: Uint8ClampedArray | null = null;
+  let roughW = 0;
+  let roughH = 0;
+  if (roughnessSource) {
+    const rImg = roughnessSource.image as HTMLImageElement | ImageBitmap;
+    roughW = rImg.width;
+    roughH = rImg.height;
+    const tmp = document.createElement("canvas");
+    tmp.width = roughW;
+    tmp.height = roughH;
+    const tCtx = tmp.getContext("2d", { willReadFrequently: true });
+    if (!tCtx) throw new Error("Could not sample rock roughness map");
+    tCtx.drawImage(rImg, 0, 0);
+    roughSrc = new Uint8ClampedArray(
+      tCtx.getImageData(0, 0, roughW, roughH).data,
+    );
+    roughnessSource.dispose();
+  }
+
+  const metalCanvas = document.createElement("canvas");
+  metalCanvas.width = w;
+  metalCanvas.height = h;
+  const mCtx = metalCanvas.getContext("2d")!;
+  const metalImage = mCtx.createImageData(w, h);
+  const metal = metalImage.data;
+
+  const roughCanvas = document.createElement("canvas");
+  roughCanvas.width = w;
+  roughCanvas.height = h;
+  const rCtx = roughCanvas.getContext("2d")!;
+  const roughImage = rCtx.createImageData(w, h);
+  const rough = roughImage.data;
+
+  const amount = 1.55;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = (y * w + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const center = copy[i + c]!;
+        const blur =
+          (copy[((y - 1) * w + x) * 4 + c]! +
+            copy[((y + 1) * w + x) * 4 + c]! +
+            copy[(y * w + (x - 1)) * 4 + c]! +
+            copy[(y * w + (x + 1)) * 4 + c]! +
+            center) /
+          5;
+        src[i + c] = Math.min(
+          255,
+          Math.max(0, Math.round(center + (center - blur) * amount)),
+        );
+      }
+    }
+  }
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      src[i] = Math.round(src[i]! * CHARCOAL_ALBEDO);
+      src[i + 1] = Math.round(src[i + 1]! * CHARCOAL_ALBEDO);
+      src[i + 2] = Math.round(src[i + 2]! * CHARCOAL_ALBEDO);
+      metal[i] = metal[i + 1] = metal[i + 2] = 0;
+      const rockRough = sampleRockRoughness(
+        roughSrc,
+        roughW,
+        roughH,
+        x,
+        y,
+        w,
+        h,
+      );
+      rough[i] = rough[i + 1] = rough[i + 2] = rockRough;
+      metal[i + 3] = 255;
+      rough[i + 3] = 255;
+    }
+  }
+
+  aCtx.putImageData(image, 0, 0);
+  mCtx.putImageData(metalImage, 0, 0);
+  rCtx.putImageData(roughImage, 0, 0);
+  source.dispose();
+
+  return {
+    map: canvasTex(albedoCanvas, THREE.SRGBColorSpace),
+    metalnessMap: canvasTex(metalCanvas, THREE.NoColorSpace),
+    roughnessMap: canvasTex(roughCanvas, THREE.NoColorSpace),
+  };
+}
+
+export interface GoldRockMaps {
+  map: THREE.Texture;
+  roughnessMap: THREE.Texture;
+}
+
+let goldRockMapsPromise: Promise<GoldRockMaps> | null = null;
+
+/** Load scratched-gold maps once for full-gold satellite rocks. */
+export function prepareGoldRockMaps(): Promise<GoldRockMaps> {
+  if (!goldRockMapsPromise) {
+    goldRockMapsPromise = loadGoldStrip().then((strip) =>
+      buildCrystalGoldMaps(strip),
+    );
+  }
+  return goldRockMapsPromise;
+}
+
+/** Fully metallic gold material for satellite rocks in the cluster scene. */
+export function createGoldRockMaterial(
+  maps: GoldRockMaps,
+  opts: { normalMap?: THREE.Texture; envMapIntensity?: number } = {},
+): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,
+    map: maps.map,
+    roughnessMap: maps.roughnessMap,
+    roughness: 1,
+    metalness: 1,
+    normalMap: opts.normalMap,
+    normalScale: opts.normalMap ? new THREE.Vector2(1.2, 1.2) : undefined,
+    envMapIntensity: opts.envMapIntensity ?? 1.0,
+    clearcoat: 0.05,
+    clearcoatRoughness: 0.35,
+  });
 }
 
 /**

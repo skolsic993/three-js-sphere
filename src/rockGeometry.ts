@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
-import { compositeRockAlbedoWithGold, loadGoldStrip } from "./goldMaps";
+import {
+  compositeRockAlbedoWithGold,
+  buildCharcoalRockMaps,
+  loadGoldStrip,
+} from "./goldMaps";
 
 /**
  * Procedural charcoal ore chunk — tall fractured teardrop with sharp cleavage
@@ -27,10 +31,7 @@ const GPU_TEX_MAX = 2048;
  * Downsample a loaded texture's image onto a canvas when either edge exceeds `maxSize`.
  * Disposes the source texture when a new one is created.
  */
-function downsampleTexture(
-  tex: THREE.Texture,
-  maxSize: number,
-): THREE.Texture {
+function downsampleTexture(tex: THREE.Texture, maxSize: number): THREE.Texture {
   const img = tex.image as HTMLImageElement | ImageBitmap | undefined;
   if (!img || !("width" in img)) return tex;
   const w = img.width;
@@ -172,6 +173,61 @@ export async function loadRockTextures(
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.repeat.set(TEX_REPEAT, TEX_REPEAT);
+  }
+
+  return {
+    map,
+    normalMap,
+    roughnessMap,
+    metalnessMap,
+    displacementMap,
+    aoMap,
+  };
+}
+
+/** Apply shared UV sampling settings for rock PBR maps. */
+function configureRockTexture(tex: THREE.Texture, maxAnisotropy: number): void {
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = maxAnisotropy;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.repeat.set(TEX_REPEAT, TEX_REPEAT);
+}
+
+/** Charcoal PBR — same processing as the paint rock, but no gold flecks in albedo or metalness. */
+export async function loadDarkRockTextures(
+  maxAnisotropy = 16,
+): Promise<RockTextures> {
+  const loader = new THREE.TextureLoader();
+  const [rawMap, rawNormal, displacementMap, roughnessSrc] = await Promise.all([
+    loader.loadAsync(`${TEX_BASE}/dark_rock.webp`),
+    loader.loadAsync(`${TEX_BASE}/dark_rock_nor.webp`),
+    loader.loadAsync(`${TEX_BASE}/dark_rock_disp.webp`),
+    loader.loadAsync(`${TEX_BASE}/dark_rock_rough.webp`),
+  ]);
+
+  const normalMap = downsampleTexture(rawNormal, GPU_TEX_MAX);
+
+  const { map, metalnessMap, roughnessMap } = buildCharcoalRockMaps(
+    rawMap,
+    roughnessSrc,
+  );
+  const aoMap = buildRockAoMap(displacementMap, metalnessMap);
+
+  normalMap.colorSpace = THREE.NoColorSpace;
+  displacementMap.colorSpace = THREE.NoColorSpace;
+  aoMap.colorSpace = THREE.NoColorSpace;
+  for (const tex of [
+    map,
+    normalMap,
+    roughnessMap,
+    metalnessMap,
+    displacementMap,
+    aoMap,
+  ]) {
+    configureRockTexture(tex, maxAnisotropy);
   }
 
   return {
@@ -372,11 +428,14 @@ export function createRockGeometry(
     detail?: number;
     scale?: number;
     seed?: number;
+    profile?: "teardrop" | "tablet";
   } = {},
 ): THREE.BufferGeometry {
   const detail = opts.detail ?? 7;
-  const scale = opts.scale ?? 2.55;
+  const profile = opts.profile ?? "teardrop";
+  const scale = opts.scale ?? (profile === "tablet" ? 1.5 : 2.55);
   const seed = opts.seed ?? 4.1;
+  const isTablet = profile === "tablet";
 
   // PolyhedronGeometry is non-indexed (duplicate verts for UV seams). Weld by
   // position only — mergeVertices hashes *all* attributes, so differing seam UVs
@@ -432,10 +491,10 @@ export function createRockGeometry(
   for (let i = 0; i < pos.count; i++) {
     p.fromBufferAttribute(pos, i);
 
-    // --- 1. Vertical teardrop: bulky upper half, narrow jagged tip ---
-    p.x *= 0.9;
-    p.y *= 1.52;
-    p.z *= 0.86;
+    // --- 1. Silhouette: tall teardrop (paint rock) or wider tablet (cluster center) ---
+    p.x *= isTablet ? 1.12 : 0.9;
+    p.y *= isTablet ? 1.0 : 1.52;
+    p.z *= isTablet ? 1.1 : 0.86;
     const x1 = p.x + p.y * 0.07;
     const y1 = p.y - p.x * 0.04;
     const z1 = p.z + p.x * 0.05;
@@ -468,22 +527,27 @@ export function createRockGeometry(
     const yN = dir.y;
     const bottom = THREE.MathUtils.smootherstep(yN, -1, 0.08);
     const topPinch = THREE.MathUtils.smootherstep(yN, 0.55, 1);
-    r *= THREE.MathUtils.lerp(0.4, 1.05, bottom) * (1 - 0.12 * topPinch);
-    r = Math.max(0.38, r);
+    const bottomScale = isTablet
+      ? THREE.MathUtils.lerp(0.72, 1.08, bottom)
+      : THREE.MathUtils.lerp(0.4, 1.05, bottom);
+    const topScale = isTablet ? 1 - 0.22 * topPinch : 1 - 0.12 * topPinch;
+    r *= bottomScale * topScale;
+    r = Math.max(isTablet ? 0.48 : 0.38, r);
 
     p.copy(dir).multiplyScalar(r);
 
-    // --- 3. Front/lower ellipsoid gouge — deep bowl, noisy rim so it isn't a circle ---
+    // --- 3. Front gouge — deep on teardrop, shallow on tablet ---
     cavityRel.set((p.x - 0.48) / 0.56, (p.y + 0.2) / 0.46, (p.z - 0.05) / 0.5);
     const cavityDist = cavityRel.length();
     const rimJitter =
       fbm(p.x * 5.2 + seed, p.y * 5.2, p.z * 5.2, 3) * 0.14 +
       ridged(p.x * 3.4, p.y * 3.4 + seed, p.z * 3.4, 2) * 0.08;
     const cavityOuter = 1.08 + rimJitter;
+    const gougeDepth = isTablet ? 0.28 : 0.82;
     if (cavityDist < cavityOuter) {
       const t = 1 - cavityDist / cavityOuter;
       const bowl = t * t * t;
-      const depth = bowl * 0.82;
+      const depth = bowl * gougeDepth;
       p.x -= depth;
       p.y += cavityRel.y * depth * 0.14;
       p.z += cavityRel.z * depth * 0.2;
